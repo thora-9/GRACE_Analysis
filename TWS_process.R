@@ -12,6 +12,11 @@ tws_mascon =
   group_by(lat,lon) %>%
   mutate(cell_id = cur_group_id())  %>% as.data.table()
 
+mascons = 
+  tidync('~/Dropbox/WB/GRACE_Analysis/JPL_MSCNv02_PLACEMENT.nc') %>%
+  activate("D1") %>%
+  hyper_tibble() %>% as.data.table()
+
 clm_factors = 
   tidync('~/Dropbox/WB/GRACE_Analysis/CLM4.SCALE_FACTOR.JPL.MSCNv02CRI.nc') %>%
   activate("D0,D1") %>%
@@ -64,10 +69,54 @@ test =
   tidync('/Users/tejasvi/Dropbox/Mac/Downloads/GLDAS/GLDAS_NOAH025_M.A200309.021.nc4.SUB.nc4')
 
 
+
+# For accumulated variables such as Qs_acc, the monthly mean surface runoff is the 
+# average 3-hour accumulation over all 3-hour intervals in April 1979. To compute 
+# monthly accumulation, use this formula: 
+#   
+#   Qs_acc (April){kg/m2} = Qs_acc (April){kg/m2/3hr} * 8{3hr/day} * 30{days} 
+
+dates = seq(ymd("2000-01-01"), ymd('2021-06-30'), "month")
+dates2 = as.Date(unique(gldas_noah$time), origin = '2000-01-01')
+
 gldas_noah = 
   tidync('~/Dropbox/Mac/Downloads/GLDAS/gldas_noah_merge.nc4') %>%
-  hyper_filter(lon = lon > 65 & lon < 100,  lat = lat > 5 & lat < 40, time = time < 360) %>%
-  hyper_tibble() %>% as.data.table() 
+  hyper_filter(lon = lon > 65 & lon < 100,  lat = lat > 5 & lat < 40) %>%
+  hyper_tibble() %>% as.data.table() %>%
+  .[,Qs_month := Qs_acc * 8 * 30] %>% #Convert accumulated runoff into monthly runoff
+  .[, total_water_without_runoff := 
+      (SWE_inst + SoilMoi0_10cm_inst + SoilMoi10_40cm_inst +
+      SoilMoi40_100cm_inst + SoilMoi100_200cm_inst + CanopInt_inst)/10] %>%
+  .[, total_water := 
+      (Qs_month + SWE_inst + SoilMoi0_10cm_inst + SoilMoi10_40cm_inst +
+      SoilMoi40_100cm_inst + SoilMoi100_200cm_inst + CanopInt_inst)/10] 
+#convert kg/m2 -> 1000m3/m2 -> m -> /100 cm
+
+
+gldas_dates =
+  copy(gldas_noah[,.(time)]) %>% distinct() %>%
+  .[,ym := substr(as.Date(time, origin = '2000-01-01'), 1, 7)]  
+
+gldas_noah = 
+  gldas_noah %>% merge(gldas_dates, by = 'time') %>%
+  .[ym %in% dates1$ym] 
+
+gldas_noah_spread = 
+  gldas_noah[,.(total_water_without_runoff, lon, lat, ym)] %>%
+  dcast(lon + lat ~ ym, value.var = "total_water_without_runoff") 
+
+#Estimate the new baseline land water content
+mean_gldas = apply(gldas_noah_spread[, 3:163], 1, mean) 
+
+#Remove the new baseline (currently not using data from GRACE-FO)
+gldas_lwc_base = 
+  gldas_noah_spread[, 3:163] - mean_gldas
+
+gldas_noah_base_rem = 
+  cbind(gldas_noah_spread[,1:2], gldas_lwc_base) %>%
+  merge(tws_lwe_base[,.(lon,lat,cell_id)], by = c("lat", "lon"))
+
+  
 
 #fwrite(test, "GLDAS.csv")
 
