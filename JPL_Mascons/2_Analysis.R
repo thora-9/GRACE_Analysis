@@ -1,5 +1,5 @@
 #Summary:
-#Producing country-level annual volumetric changes using JPL data
+#Producing country-level annual volumetric changes using JPL data (non-cropped)
 
 library(tidync)
 library(data.table)
@@ -88,7 +88,7 @@ crop_flag = T
 if(crop_flag == T) {
   gws_TS_country =
     gws_TS_country %>%
-    dplyr::filter(Per_crop_area>20)
+    dplyr::filter(Per_crop_area<20)
 }
 
 #Test to see how the remaining GRACE points look
@@ -175,9 +175,9 @@ gws.comb.annual =
          gws_75_diff_vol = (gws_75_diff/1e+06) * count * 111 * 111)
   
   
-# fwrite(gws.comb.annual, 
-#        paste0(proj_dir,
-#               "Outputs/JPL_Mascons/JPL_country_level_gws_COMB_annual_crop.csv"))
+fwrite(gws.comb.annual,
+       paste0(proj_dir,
+              "Outputs/JPL_Mascons/JPL_country_level_gws_COMB_annual_non_crop.csv"))
 
 
 
