@@ -134,38 +134,39 @@ plot_trends <- function(R, horiz){
 
 #The GRACE Mascon dataset
 tws_mascon =
-  tidync(paste0(proj_dir,'GRACE_data/JPL_Mascons/GRCTellus.JPL.200204_202106.GLO.RL06M.MSCNv02CRI.nc')) %>%
-  activate("D0,D1,D2") %>%
+  tidync(paste0(proj_dir,'GRACE_data/CSR_Mascons/CSR_GRACE_GRACE-FO_RL06_Mascons_all-corrections_v02.nc')) %>%
+  activate("D2,D3,D1") %>%
   hyper_tibble() %>% as.data.table() %>%
   .[order(lat, lon)] %>% #ensures the order is the same
   group_by(lat,lon) %>%
   mutate(cell_id = cur_group_id())  %>% as.data.table()
 
-#Locations of the mascons
-mascons = 
-  tidync('~/Dropbox/WB/GRACE_Analysis/JPL_MSCNv02_PLACEMENT.nc') %>%
-  activate("D1") %>%
-  hyper_tibble() %>% as.data.table()
-
-#Adjustment factors
-clm_factors = 
-  tidync('~/Dropbox/WB/GRACE_Analysis/CLM4.SCALE_FACTOR.JPL.MSCNv02CRI.nc') %>%
-  activate("D0,D1") %>%
-  hyper_tibble() %>% as.data.table()
+test2 = 
+  tidync(paste0(proj_dir,'GRACE_data/CSR_Mascons/CSR_GRACE_GRACE-FO_RL06_Mascons_all-corrections_v02_1degree.nc')) %>%
+  activate("D2,D3,D0") %>%
+  hyper_tibble() %>% as.data.table() 
 
 #Land Boundary
 land_filter = 
-  tidync('~/Dropbox/WB/GRACE_Analysis/LAND_MASK.CRI.nc') %>%
+  tidync(paste0(proj_dir,'GRACE_data/CSR_Mascons/CSR_GRACE_GRACE-FO_RL06_Mascons_v02_LandMask.nc')) %>%
+  activate("D1,D0") %>%
+  hyper_tibble() %>% as.data.table() %>%
+  filter(LO_val == 1)
+
+test = 
+  tidync(paste0(proj_dir,'GRACE_data/CSR_Mascons/test.nc')) %>%
   activate("D0,D1") %>%
   hyper_tibble() %>% as.data.table() 
 
 #Dates 
 dates1 = 
-  tws_mascon[,.(time)]%>% distinct() %>%
+  tws_mascon[,.(time)] %>% distinct() %>%
   mutate(dates = as.Date(time, origin = '2002-01-01')) %>%
   mutate(ym = substr(ymd(dates), 1, 7)) 
 
 dates1 = dates1[!duplicated(dates1$ym)]
+
+
 
 ########################
 ######### Analysis
@@ -181,12 +182,11 @@ tws_lwe =
   tws_mascon[,.(lwe_corr, lon, lat, cell_id, ym)] %>%
   dcast(lon + lat + cell_id ~ ym, value.var = "lwe_corr") 
 
-#Estimate the new baseline (2002-2020)
-bsl_colnum = 164 #199 = 2020; 165 = 2012; 118 = 2012
-mean_tws = apply(tws_lwe[, 4:bsl_colnum], 1, mean) 
+#Estimate the new baseline
+mean_tws = apply(tws_lwe[, 4:118], 1, mean) 
 
 #Estimate the new baseline
-sd_tws = apply(tws_lwe[, 4:bsl_colnum], 1, sd) 
+sd_tws = apply(tws_lwe[, 4:118], 1, sd) 
 
 #Remove the new baseline (currently not using data from GRACE-FO)
 tws_lwe_base = 
@@ -202,8 +202,8 @@ tws_lwe_base =
 # fwrite(tws_lwe_base, 
 #        paste0(proj_dir, "GRACE_Data/JPL_Mascons/GRACE_JPL_TWS_220502.csv"))
 
-# test = 
-#   tidync('/Users/tejasvi/Dropbox/Mac/Downloads/GLDAS/GLDAS_NOAH025_M.A200309.021.nc4.SUB.nc4')
+test = 
+  tidync('/Users/tejasvi/Dropbox/Mac/Downloads/GLDAS/GLDAS_NOAH025_M.A200309.021.nc4.SUB.nc4')
 
 
 #Use the methodology developed by Shamsuddhua and Taylor (2020)
@@ -237,22 +237,22 @@ gldas_noah =
   .[ym %in% dates1$ym] 
 
 ##########Without runoff
-# gldas_noah_spread = 
-#   gldas_noah[,.(total_water_without_runoff, lon, lat, ym)] %>%
-#   dcast(lon + lat ~ ym, value.var = "total_water_without_runoff") 
-# 
-# #Estimate the new baseline land water content (2002-2020)
-# mean_gldas = apply(gldas_noah_spread[, 3:198], 1, mean) 
-# 
-# #Remove the new baseline (currently not using data from GRACE-FO)
-# gldas_lwc_base = 
-#   gldas_noah_spread[, 3:198] - mean_gldas
-# 
-# gldas_noah_base_rem = 
-#   cbind(gldas_noah_spread[,1:2], gldas_lwc_base) %>%
-#   merge(tws_lwe_base[,.(lon,lat,cell_id)], by = c("lat", "lon"), all.x = F)
-# 
-# #fwrite(gldas_noah_base_rem, "GLDAS_2002_2017_SWS_without_runoff.csv")
+gldas_noah_spread = 
+  gldas_noah[,.(total_water_without_runoff, lon, lat, ym)] %>%
+  dcast(lon + lat ~ ym, value.var = "total_water_without_runoff") 
+
+#Estimate the new baseline land water content
+mean_gldas = apply(gldas_noah_spread[, 3:163], 1, mean) 
+
+#Remove the new baseline (currently not using data from GRACE-FO)
+gldas_lwc_base = 
+  gldas_noah_spread[, 3:163] - mean_gldas
+
+gldas_noah_base_rem = 
+  cbind(gldas_noah_spread[,1:2], gldas_lwc_base) %>%
+  merge(tws_lwe_base[,.(lon,lat,cell_id)], by = c("lat", "lon"), all.x = F)
+
+#fwrite(gldas_noah_base_rem, "GLDAS_2002_2017_SWS_without_runoff.csv")
 
 ###########With runoff
 gldas_noah_spread = 
@@ -260,7 +260,7 @@ gldas_noah_spread =
   dcast(lon + lat ~ ym, value.var = "total_water") 
 
 #Estimate the new baseline land water content
-mean_gldas = apply(gldas_noah_spread[, 3:(bsl_colnum-1)], 1, mean) 
+mean_gldas = apply(gldas_noah_spread[, 3:117], 1, mean) 
 
 #Remove the new baseline (currently not using data from GRACE-FO)
 gldas_lwc_base = 
@@ -294,13 +294,13 @@ gws_anomaly = cbind(tws_anomaly[,1:3], gws_anomaly)
 
 #WRITE OUTPUT CSV
 fwrite(sws_anomaly, 
-       paste0(proj_dir, "GRACE_Data/JPL_Mascons/GLDAS_NOAH_02_20_SWS_wRunoff_BSL2017.csv"))
+       paste0(proj_dir, "GRACE_Data/JPL_Mascons/GLDAS_NOAH_02_20_SWS_wRunoff_220508.csv"))
        
 fwrite(tws_anomaly, 
-       paste0(proj_dir, "GRACE_Data/JPL_Mascons/GRACE_TWS_scaled_BSL2017.csv"))
+       paste0(proj_dir, "GRACE_Data/JPL_Mascons/GRACE_TWS_scaled_220508.csv"))
 
 fwrite(gws_anomaly, 
-       paste0(proj_dir, "GRACE_Data/JPL_Mascons/GRACE_GWS_2002_2020_wRunoff_BSL2017.csv"))
+       paste0(proj_dir, "GRACE_Data/JPL_Mascons/GRACE_GWS_2002_2020_wRunoff_220508.csv"))
 
 
 ####Trend Analysis

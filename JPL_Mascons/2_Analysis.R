@@ -20,7 +20,7 @@ proj_dir = "~/Dropbox/WB/GRACE_Ensemble/"
 grace = 
   #fread('Output/z_score/GRACE_GWS_2002_2017_zscore.csv')
   fread(paste0(proj_dir,
-               "GRACE_Data/JPL_Mascons/GRACE_GWS_2002_2020_wRunoff_220508.csv"))
+               "GRACE_Data/JPL_Mascons/GRACE_GWS_2002_2020_wRunoff_BSL2012_220508.csv"))
 
 #Source: https://doi.org/10.1038/s43016-021-00429-z
 crop_area = 
@@ -56,8 +56,8 @@ grace_test =
 #Use the country level median estimating script
 
 #Load the data --this time it contains %cropped area (z-score version)
-gws_TS = 
-  fread('Output/z_score/GRACE_GWS_02_17_zscore_crop.csv')
+# gws_TS = 
+#   fread('Output/z_score/GRACE_GWS_02_17_zscore_crop.csv')
 
 #cm-equivalent version need to run the code block above
 gws_TS = grace_wcrop
@@ -84,11 +84,19 @@ gws_TS_country =
   st_make_valid() %>%
   st_join(wb_regions)
 
-crop_flag = T
-if(crop_flag == T) {
+crop_flag = T #This flag helps triggering based on cropped arae
+cropped.thresh = T #This flag help determine if we should filter regions with >20% cropped area or not
+
+if(crop_flag == T & cropped.thresh == T) {
+  gws_TS_country =
+    gws_TS_country %>%
+    dplyr::filter(Per_crop_area>20)
+  output.name = 'JPL_country_level_gws_COMB_annual_crop_BSL2012.csv'
+} else if(crop_flag == T & cropped.thresh == F){
   gws_TS_country =
     gws_TS_country %>%
     dplyr::filter(Per_crop_area<20)
+  output.name = 'JPL_country_level_gws_COMB_annual_non_crop_BSL2012.csv'
 }
 
 #Test to see how the remaining GRACE points look
@@ -130,13 +138,11 @@ gws.50.long =
   dplyr::select(-cell_id, -geometry, -count) %>%
   drop_na()
 
-
 gws.25.long = 
   gws.country.25 %>%
   gather(yearmon, gws_25, `2002-04`:`2021-01`) %>%
   as.data.table() %>%
   dplyr::select(-cell_id, -geometry, -count) %>% drop_na()
-
 
 gws.75.long = 
   gws.country.75 %>%
@@ -160,6 +166,10 @@ gws.comb =
 #Obtain a yearly gws value for each country by taking the mean
 #For each of the gws columns, obtain the year-by-year difference value
 #Using the total cell count, get the estimated volume change
+
+res = 0.5 #resolution in degrees
+res_km = res * 111
+
 gws.comb.annual = 
   gws.comb %>%
   dplyr::select(WB_NAME, year, gws_median, gws_25, gws_75) %>%
@@ -170,17 +180,22 @@ gws.comb.annual =
          gws_25_diff = gws_25 - lag(gws_25),
          gws_75_diff = gws_75 - lag(gws_75)) %>%
   merge(ag.countries, by = 'WB_NAME', all.x = T) %>%
-  mutate(gws_50_diff_vol = (gws_50_diff/1e+06) * count * 111 * 111,
-         gws_25_diff_vol = (gws_25_diff/1e+06) * count * 111 * 111,
-         gws_75_diff_vol = (gws_75_diff/1e+06) * count * 111 * 111)
+  mutate(gws_50_diff_vol = (gws_50_diff/1e+06) * count * res_km * res_km,
+         gws_25_diff_vol = (gws_25_diff/1e+06) * count * res_km * res_km,
+         gws_75_diff_vol = (gws_75_diff/1e+06) * count * res_km * res_km) %>%
+  mutate(gws_50_vol = (gws_median/1e+06) * count * res_km * res_km,
+         gws_25_vol = (gws_25/1e+06) * count * res_km * res_km,
+         gws_75_vol = (gws_75/1e+06) * count * res_km * res_km) %>%
+  merge(wb_regions %>% as.data.frame() %>% dplyr::select(-geometry, -TYPE), 
+        by = 'WB_NAME', all.x = T)
   
   
 fwrite(gws.comb.annual,
        paste0(proj_dir,
-              "Outputs/JPL_Mascons/JPL_country_level_gws_COMB_annual_non_crop.csv"))
+              "Outputs/JPL_Mascons/",output.name))
 
-
-
+##############################################################################
+##############################################################################
 gws.wide.country = 
   gws.comb %>%
   dplyr::select(1:3) %>%
