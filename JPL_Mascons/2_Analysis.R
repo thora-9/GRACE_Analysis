@@ -17,10 +17,16 @@ proj_dir = "~/Dropbox/WB/GRACE_Ensemble/"
 
 #Load the GWS data
 #Can pick the z-score or cm-equivalent version of GWS
+
+grace_versions = c("GRACE_GWS_2002_2020_wRunoff_BSL2017.csv",
+                   "GRACE_GWS_2002_2020_wRunoff_BSL2020_220529.csv",
+                   "GRACE_GWS_2002_2020_wRunoff_BSL2012_220508.csv")
+
+
 grace = 
   #fread('Output/z_score/GRACE_GWS_2002_2017_zscore.csv')
   fread(paste0(proj_dir,
-               "GRACE_Data/JPL_Mascons/GRACE_GWS_2002_2020_wRunoff_BSL2012_220508.csv"))
+               "GRACE_Data/JPL_Mascons/", grace_versions[3]))
 
 #Source: https://doi.org/10.1038/s43016-021-00429-z
 crop_area = 
@@ -91,12 +97,12 @@ if(crop_flag == T & cropped.thresh == T) {
   gws_TS_country =
     gws_TS_country %>%
     dplyr::filter(Per_crop_area>20)
-  output.name = 'JPL_country_level_gws_COMB_annual_crop_BSL2012.csv'
+  output.name = 'JPL_country_level_gws_COMB_annual_crop_BSL2017.csv'
 } else if(crop_flag == T & cropped.thresh == F){
   gws_TS_country =
     gws_TS_country %>%
     dplyr::filter(Per_crop_area<20)
-  output.name = 'JPL_country_level_gws_COMB_annual_non_crop_BSL2012.csv'
+  output.name = 'JPL_country_level_gws_COMB_annual_non_crop_BSL2017.csv'
 }
 
 #Test to see how the remaining GRACE points look
