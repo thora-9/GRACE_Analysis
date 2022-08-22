@@ -210,5 +210,5 @@ test_grid =
   rasterFromXYZ(crs = crs('+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0')) 
 plot(test_grid)
 
-fwrite(gldas_vic_base_rem,
+fwrite(gldas_clsm_base_rem,
        paste0(proj_dir, 'CLSM/GLDAS_CLSM_1degree_BSL2017_SWS_with_runoff_220725.csv'))
