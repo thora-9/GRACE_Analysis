@@ -1,0 +1,746 @@
+---
+title: "Exploratory Assessment of the Downscaled GRACE product"
+author: "Tejasvi Hora"
+date: "`r Sys.Date()`"
+analyst: |
+  | Tejasvi Hora
+output: 
+  html_document:
+    df_print: kable
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    theme: spacelab
+knit: (function(inputFile, encoding) { 
+          rmarkdown::render(inputFile,
+                            encoding = encoding, 
+                            output_file = 'dGWS_analysis_221015.html',  
+                            output_dir = '/Users/tejasvi/Dropbox/WB/GRACE_Ensemble/Scripts/Downscaled/') })
+editor_options: 
+  chunk_output_type: console
+---
+
+## Introduction
+This report relies on the downscaled GRACE data-provided by __Prof. Di Long, Li Chen and Ximing Wang.__
+
+The purpose of this report is to:
+
+* Exploratory Assessment of the downscaled GRACE-GWS (groundwater storage anomaly)
+* Comparison of the downscaled product with in-situ well measurements in India 
+* Comparison of the downscaled 0.5 degree product and non-Downscaled interpolated GRACE dataset (the one I had produced)
+
+**Please note:** It appears that the downscaled product now covers entire regions (i.e. SA, MENA and SSA). It will be worth discussing the 
+methodology used to move from individual basins to regions.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidync)
+library(data.table)
+library(tidyverse)
+library(lubridate)
+library(zyp)
+library(sf)
+library(raster)
+library(terra)
+library(RColorBrewer)
+library(rasterVis)
+library(xts)
+library(stars)
+library(fasterize)
+```
+
+## Load and pre-process the datasets
+
+Main steps involved:
+
+* Loading the dataset: `GWS_mean_05deg.nc`
+* Linking points with World Bank regions data
+
+```{r echo = FALSE, collapse = TRUE, cache=TRUE, results='hide'}
+proj_dir = "/Users/tejasvi/Dropbox/WB/GRACE_Ensemble/"
+
+pathData = '/Users/tejasvi/Dropbox/gwflagship_GRACEdownscaling/Downscaled TWS_GWS v2/'
+gws_mean_05 = 
+  tidync(paste0(pathData, 'GWS_mean_05deg.nc')) %>%
+  hyper_tibble() %>% as.data.table()
+
+#Create a date sequence
+date.seq = 
+  seq(as.Date("2003/2/1"), as.Date("2021/9/1"), "month") %>%
+  as.data.table() %>%
+  rownames_to_column() %>%
+  .[, rowname := as.integer(rowname)]
+colnames(date.seq) = c('rowname', 'date')
+
+#Merge the dates using the rowname column
+gws_mean_05 = 
+  gws_mean_05 %>%
+  merge(date.seq, by.x = 'time', by.y = 'rowname', all.x = T) %>%
+  .[, ':='(yearmon = substr(date, 1, 7),
+           GWSA_mean = (GWSA_CLSM+GWSA_Noah)/2)] 
+  
+#Convert to wide
+gws_05_wide = 
+  gws_mean_05 %>% 
+  dplyr::select(GWSA_mean, lat, lon, date) %>%
+  tidyr::spread(key = date, value = GWSA_mean) %>%
+  mutate(cell_id = paste0(lon, lat))
+
+#Convert to spatial object
+gws_05.v = 
+  st_as_sf(gws_05_wide, coords = c("lon", "lat"), 
+           crs = "+proj=longlat +datum=WGS84 +no_defs")
+
+#Load the studyregions
+med.v = st_read(paste0(pathData, 'studyregions/med.shp'))
+
+sa.v = st_read(paste0(pathData, 'studyregions/sa.shp'))
+
+saf.v = st_read(paste0(pathData, 'studyregions/saf.shp'))
+
+####Load World Regions
+wb_regions = 
+  st_read(paste0(proj_dir, "Spatial Files/WB_Regions/WB_countries_Admin0_10m.shp")) %>%
+  dplyr::select(WB_NAME, ISO_A2, ISO_A3, ISO_N3, TYPE, REGION_WB) %>%
+  filter(TYPE != 'Dependency') %>%
+  st_make_valid()
+
+#Merge country data with GRACE
+gws_05.v = 
+  gws_05.v %>%
+  st_make_valid() %>%
+  st_join(wb_regions)
+
+#Add the WB regions to the data.table version
+gws_05_wide = 
+  gws_05_wide %>%
+  merge(gws_05.v[,c(213:219)] %>% st_drop_geometry(), by = 'cell_id', all.x = T)
+
+```
+
+## Trend Analysis {.tabset .tabset-pills}
+
+The steps involved in assessing trends were:
+
+* Conversion of monthly GWS estimates to annual
+* Estimating _linear_ trends by estimating Sen's Slope
+* Significance of trend not assessed
+
+### MENA 
+
+```{r echo=FALSE, collapse = TRUE}
+#Conduct a trend analysis on each pixel
+
+#First, convert values from monthly to year
+gws_annual = 
+  gws_05_wide %>% 
+  .[as.character(REGION_WB) == 'Middle East & North Africa'] %>%
+  data.table::melt(id.vars = c("lon", "lat", "cell_id"),
+                   measure.vars = 3:214,
+                   variable.name = "ymd", value.name = "GWSA_mean") %>% 
+  .[, year := substr(ymd, 1,4)] %>%
+  .[, an_mean := mean(GWSA_mean), .(lat, lon, year)] %>% 
+  .[,.(lat, lon, cell_id, year, an_mean)] %>% distinct() %>%
+  dcast(lon + lat + cell_id ~ year, value.var = "an_mean") %>% .[order(cell_id)]
+
+gws_trends = 
+  apply(gws_annual[, 4:ncol(gws_annual)], 1, zyp.yuepilon)
+
+gws_trends_estimates = 
+  gws_annual[,1:3] %>%
+  mutate(trends = gws_trends[2,], sig = gws_trends[6,]) %>%
+  mutate(lon = ifelse(lon>180, lon-360, lon))
+
+gws_trends_estimates = 
+  gws_trends_estimates %>%
+  mutate(trends = ifelse(trends < -2, -2, trends)) %>%
+  mutate(trends = ifelse(trends > 2, 2, trends)) 
+
+gws.raster = rasterFromXYZ(gws_trends_estimates[,.(lon, lat, trends)])
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.raster,
+     breaks = c(-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2),
+     col = color_pal, 
+     legend.args = list(text = 'Trend (cm/yr)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+
+```
+
+### SSA
+
+```{r echo=FALSE, collapse = TRUE}
+
+#First, convert values from monthly to year
+gws_annual = 
+  gws_05_wide %>% 
+  .[as.character(REGION_WB) == 'Sub-Saharan Africa'] %>%
+  data.table::melt(id.vars = c("lon", "lat", "cell_id"),
+                   measure.vars = 3:214,
+                   variable.name = "ymd", value.name = "GWSA_mean") %>% 
+  .[, year := substr(ymd, 1,4)] %>%
+  .[, an_mean := mean(GWSA_mean), .(lat, lon, year)] %>% 
+  .[,.(lat, lon, cell_id, year, an_mean)] %>% distinct() %>%
+  dcast(lon + lat + cell_id ~ year, value.var = "an_mean") %>% .[order(cell_id)]
+
+gws_trends = 
+  apply(gws_annual[, 4:ncol(gws_annual)], 1, zyp.yuepilon)
+
+gws_trends_estimates = 
+  gws_annual[,1:3] %>%
+  mutate(trends = gws_trends[2,], sig = gws_trends[6,]) %>%
+  mutate(lon = ifelse(lon>180, lon-360, lon))
+
+gws_trends_estimates = 
+  gws_trends_estimates %>%
+  mutate(trends = ifelse(trends < -2, -2, trends)) %>%
+  mutate(trends = ifelse(trends > 2, 2, trends)) 
+
+gws.raster = rasterFromXYZ(gws_trends_estimates[,.(lon, lat, trends)])
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.raster,
+     breaks = c(-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2),
+     col = color_pal, 
+     legend.args = list(text = 'Trend (cm/yr)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+
+```
+
+
+
+### SA
+
+```{r echo=FALSE}
+
+#First, convert values from monthly to year
+gws_annual = 
+  gws_05_wide %>% 
+  .[as.character(REGION_WB) == 'South Asia'] %>%
+  data.table::melt(id.vars = c("lon", "lat", "cell_id"),
+                   measure.vars = 3:214,
+                   variable.name = "ymd", value.name = "GWSA_mean") %>% 
+  .[, year := substr(ymd, 1,4)] %>%
+  .[, an_mean := mean(GWSA_mean), .(lat, lon, year)] %>% 
+  .[,.(lat, lon, cell_id, year, an_mean)] %>% distinct() %>%
+  dcast(lon + lat + cell_id ~ year, value.var = "an_mean") %>% .[order(cell_id)]
+
+gws_trends = 
+  apply(gws_annual[, 4:ncol(gws_annual)], 1, zyp.yuepilon)
+
+gws_trends_estimates = 
+  gws_annual[,1:3] %>%
+  mutate(trends = gws_trends[2,], sig = gws_trends[6,]) %>%
+  mutate(lon = ifelse(lon>180, lon-360, lon))
+
+gws_trends_estimates = 
+  gws_trends_estimates %>%
+  mutate(trends = ifelse(trends < -2, -2, trends)) %>%
+  mutate(trends = ifelse(trends > 2, 2, trends)) 
+
+gws.raster = rasterFromXYZ(gws_trends_estimates[,.(lon, lat, trends)])
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.raster,
+     breaks = c(-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2),
+     col = color_pal, 
+     legend.args = list(text = 'Trend (cm/yr)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+
+```
+
+
+## Comparison with In-situ data {.tabset .tabset-pills}
+
+In this section, the downscaled GRACE data was compared with in-situ well data in India.
+
+The main steps involved in the comparison included:
+
+* Linking individual wells to pixels 
+* Subsetting the available wells to wells with relatively continuous time-series.
+For dug-wells, wells with <20 missing points were included; for bore wells, wells with <50 missing points
+were included
+* Calculating a mean water-level time-series for each pixels based on the wells in that 
+pixel
+* Linking the well-based TS with the downscaled GRACE product for the same months
+* Estimating the correlation co-efficient between the two
+
+Information about the wells data:
+
+* 28076 wells (bore well + dug wells)
+* Available for 4 months of the year (Jan, May, Aug and Nov)
+* 1996-2017
+
+
+### Dug-wells 
+
+```{r echo=FALSE, collapse = TRUE}
+#Need to essentially use the gws.raster to create a fishnet polygon
+#which will be used to compare the output from GRACE and in-situ
+rasterTemplate = gws.raster
+vectorTemplate = 
+  rasterTemplate %>%
+  st_as_stars() %>%
+  st_as_sf(as_points = FALSE, crs = "+proj=longlat +datum=WGS84 +no_defs") %>%
+  rownames_to_column()
+
+st_crs(vectorTemplate) = "+proj=longlat +datum=WGS84 +no_defs"
+
+#Load the in-situ CGWB data
+cgwb = 
+  fread('/Users/tejasvi/Dropbox/WB/In-Situ/CGWB_data_wide.csv') %>%
+  mutate(Nas = rowSums(is.na(.[,8:91]))) %>%
+  dplyr::filter(Nas<20 & SITE_TYPE == 'Dug Well') %>%
+  st_as_sf(coords = c("LON", "LAT"), 
+           crs = "+proj=longlat +datum=WGS84 +no_defs") %>%
+  st_join(vectorTemplate[,c('rowname')]) %>%
+  dplyr::select(-V1, -STATE, -DISTRICT, -SITE_TYPE, -Nas)
+
+colname.ref = colnames(cgwb)
+
+cgwb.long = 
+  cgwb %>%
+  st_drop_geometry() %>% as.data.table() %>%
+  melt(id.vars    = c("WLCODE", "rowname"),
+    measure.vars  = colname.ref[2:85],
+    variable.name = "yearmon",
+    value.name    = "measured")
+
+#Now summarize by grid cell
+cgwb.grid = 
+  cgwb.long %>% 
+  group_by(rowname, yearmon) %>%
+  dplyr::summarise(measured.mean = mean(measured, na.rm = T)) %>%
+  as.data.table() %>%
+  mutate(yearmon = as.character(yearmon))
+
+#Link grid-cell id to grace data
+gws_05.SA = 
+  gws_05.v %>% 
+  filter(as.character(REGION_WB) == 'South Asia') %>%
+  st_join(vectorTemplate[,c('rowname')]) %>%
+  st_drop_geometry() %>% as.data.table() %>%
+  data.table::melt(id.vars = c("cell_id", "rowname"),
+                   measure.vars = 3:212,
+                   variable.name = "ymd", value.name = "GWSA_mean") %>%
+  mutate(yearmon = as.yearmon(as.Date(ymd)))
+
+#Create a merged dataset
+gws.cgwb.merged = 
+  gws_05.SA %>% dplyr::select(rowname, yearmon, ymd, GWSA_mean) %>%
+  mutate(yearmon = as.character(yearmon),
+         ymd = as.Date(ymd)) %>%
+  merge(cgwb.grid, by = c('yearmon', 'rowname')) %>%
+  arrange(rowname, ymd)
+
+#Assess the correlation
+gws.cgwb.merged.cor = 
+  gws.cgwb.merged %>%
+  mutate(GWSA_mean = as.numeric(GWSA_mean),
+         measured.mean = -as.numeric(measured.mean)) %>%
+  group_by(rowname) %>% 
+  drop_na() %>%
+  dplyr::summarise(cor1=cor(GWSA_mean, measured.mean))
+  
+#Link the row names to vector
+gws.cgwb.cor.v = 
+  vectorTemplate %>%
+  merge(gws.cgwb.merged.cor, by = 'rowname') %>%
+  fasterize(rasterTemplate, field = 'cor1')
+
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.cgwb.cor.v,
+     breaks = c(-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1),
+     col = color_pal, 
+     legend.args = list(text = 'Cor (r)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+```
+
+
+### Bore-wells
+
+
+```{r echo=FALSE, collapse = TRUE}
+#Need to essentially use the gws.raster to create a fishnet polygon
+#which will be used to compare the output from GRACE and in-situ
+rasterTemplate = gws.raster
+vectorTemplate = 
+  rasterTemplate %>%
+  st_as_stars() %>%
+  st_as_sf(as_points = FALSE, crs = "+proj=longlat +datum=WGS84 +no_defs") %>%
+  rownames_to_column()
+
+st_crs(vectorTemplate) = "+proj=longlat +datum=WGS84 +no_defs"
+
+#Load the in-situ CGWB data
+cgwb = 
+  fread('/Users/tejasvi/Dropbox/WB/In-Situ/CGWB_data_wide.csv') %>%
+  mutate(Nas = rowSums(is.na(.[,8:91]))) %>%
+  dplyr::filter(Nas<50 & SITE_TYPE != 'Dug Well') %>%
+  st_as_sf(coords = c("LON", "LAT"), 
+           crs = "+proj=longlat +datum=WGS84 +no_defs") %>%
+  st_join(vectorTemplate[,c('rowname')]) %>%
+  dplyr::select(-V1, -STATE, -DISTRICT, -SITE_TYPE, -Nas)
+
+colname.ref = colnames(cgwb)
+
+cgwb.long = 
+  cgwb %>%
+  st_drop_geometry() %>% as.data.table() %>%
+  melt(id.vars    = c("WLCODE", "rowname"),
+    measure.vars  = colname.ref[2:85],
+    variable.name = "yearmon",
+    value.name    = "measured")
+
+#Now summarize by grid cell
+cgwb.grid = 
+  cgwb.long %>% 
+  group_by(rowname, yearmon) %>%
+  dplyr::summarise(measured.mean = mean(measured, na.rm = T)) %>%
+  as.data.table() %>%
+  mutate(yearmon = as.character(yearmon))
+
+#Link grid-cell id to grace data
+gws_05.SA = 
+  gws_05.v %>% 
+  filter(as.character(REGION_WB) == 'South Asia') %>%
+  st_join(vectorTemplate[,c('rowname')]) %>%
+  st_drop_geometry() %>% as.data.table() %>%
+  data.table::melt(id.vars = c("cell_id", "rowname"),
+                   measure.vars = 3:212,
+                   variable.name = "ymd", value.name = "GWSA_mean") %>%
+  mutate(yearmon = as.yearmon(as.Date(ymd)))
+
+#Create a merged dataset
+gws.cgwb.merged = 
+  gws_05.SA %>% dplyr::select(rowname, yearmon, ymd, GWSA_mean) %>%
+  mutate(yearmon = as.character(yearmon),
+         ymd = as.Date(ymd)) %>%
+  merge(cgwb.grid, by = c('yearmon', 'rowname')) %>%
+  arrange(rowname, ymd)
+
+#Assess the correlation
+gws.cgwb.merged.cor = 
+  gws.cgwb.merged %>%
+  mutate(GWSA_mean = as.numeric(GWSA_mean),
+         measured.mean = -as.numeric(measured.mean)) %>%
+  group_by(rowname) %>% 
+  drop_na() %>%
+  dplyr::summarise(cor1=cor(GWSA_mean, measured.mean))
+  
+#Link the row names to vector
+gws.cgwb.cor.v = 
+  vectorTemplate %>%
+  merge(gws.cgwb.merged.cor, by = 'rowname') %>%
+  fasterize(rasterTemplate, field = 'cor1')
+
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.cgwb.cor.v,
+     breaks = c(-1, -0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 1),
+     col = color_pal, 
+     legend.args = list(text = 'Cor (r)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+```
+
+Results show moderate to poor correlation between the downscaled product and In-Situ wells in:
+
+* For dug wells -> North-Western India
+* For bore wells -> peninsular India
+
+
+## Comparison with non-downscaled GRACE data {.tabset .tabset-pills}
+
+In this section, the downscaled GRACE data was compared with the non-downscaled GRACE products
+
+The main steps involved in the comparison included:
+
+* Disaggregating the 1 degree non-downscaled GRACE grid to 0.5 degrees
+* Linking the downscaled and non-downscaled GRACE grids
+* Estimating the correlation co-efficient between the downscaled and non-downscaled grids
+
+Information about the non-downscaled GRACE grid:
+
+* 1 degree resolution
+
+
+```{r echo=FALSE, collapse = TRUE}
+
+#Create raster template
+rasterTemplate = 
+  rasterFromXYZ(gws_05_wide[,.(lon, lat, ISO_N3)] %>% drop_na())
+
+#Create a vector template
+vectorTemplate = 
+  rasterTemplate %>%
+  st_as_stars() %>%
+  st_as_sf(as_points = FALSE, crs = "+proj=longlat +datum=WGS84 +no_defs")
+
+st_crs(vectorTemplate) = "+proj=longlat +datum=WGS84 +no_defs"
+
+vectorTemplate =
+  vectorTemplate %>%
+  st_join(wb_regions) %>%
+  rownames_to_column(var = "rowname_temp") %>%
+  rownames_to_column(var = "rowname") %>%
+  dplyr::select(-rowname_temp)
+
+#load the non-downscaled GRACE data
+gws.OG = 
+  fread(paste0(proj_dir, 
+               'Outputs/GWS/GRACE_GWS_TWS_Ensemble_SWS_Ensemble_2002_2020_BSL2017.csv')) %>%
+  #mutate(lon = lon + 0.001, lat = lat + 0.001) %>% #Jitter so points fall within a single polygon
+  st_as_sf(coords = c("lon", "lat"), 
+           crs = "+proj=longlat +datum=WGS84 +no_defs") %>%
+  st_make_valid() %>%
+  st_join(wb_regions) %>%
+  #st_join(vectorTemplate[,c('rowname')]) %>%
+  drop_na()
+  # rownames_to_column(var = "rowname2") #Need a second row ID column as the lower resolution table will have multiples after merging
+
+gws.OG.v =
+  vectorTemplate[,c('rowname')] %>%
+  st_join(gws.OG, st_nearest_feature)
+
+
+```
+
+### MENA
+
+```{r echo=FALSE, collapse = TRUE}
+template.v = 
+  vectorTemplate %>% 
+  filter(as.character(REGION_WB) == 'Middle East & North Africa') 
+
+colname.ref = colnames(gws.OG.v)
+
+#Create a long-table with the OG Grace data
+gws.OG.sub = 
+  gws.OG.v %>%
+  filter(as.character(REGION_WB) == 'Middle East & North Africa') %>%
+  st_drop_geometry() %>% as.data.table() %>%
+  melt(id.vars    = "rowname",
+    measure.vars  = colname.ref[3:193],
+    variable.name = "yearmon",
+    value.name    = "GWSA_OG") %>%
+  drop_na()
+
+#Create a long-table with the downscaled GRACE data
+gws_05.sub = 
+  gws_05.v %>% 
+  filter(as.character(REGION_WB) == 'Middle East & North Africa') %>%
+  st_join(vectorTemplate[,c('rowname')]) %>%
+  st_drop_geometry() %>% as.data.table() %>%
+  data.table::melt(id.vars = c("cell_id", "rowname"),
+                   measure.vars = 1:212,
+                   variable.name = "ymd", value.name = "GWSA_mean") %>%
+  mutate(yearmon = substr(as.Date(ymd),1,7)) %>%
+  drop_na()
+
+
+#Create a merged dataset
+gws.OG.merged = 
+  gws_05.sub %>% dplyr::select(rowname, yearmon, GWSA_mean, ymd, ) %>% 
+  merge(gws.OG.sub, by = c('yearmon', 'rowname'), all.x = T) %>%
+  arrange(rowname, ymd) %>%
+  drop_na()
+
+#Assess the correlation
+gws.OG.merged.cor = 
+  gws.OG.merged %>%
+  mutate(GWSA_mean = as.numeric(GWSA_mean),
+         GWSA_OG = as.numeric(GWSA_OG)) %>%
+  group_by(rowname) %>% 
+  dplyr::summarise(cor1=cor(GWSA_mean, GWSA_OG))
+  
+#Link the row names to vector
+gws.OG.cor.v = 
+  template.v %>%
+  merge(gws.OG.merged.cor, by = 'rowname') %>%
+  drop_na() 
+
+template.r = 
+  rasterTemplate %>% 
+  crop(gws.OG.cor.v)
+
+gws.OG.cor.v = 
+  gws.OG.cor.v %>%
+  fasterize(template.r, field = 'cor1')
+
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.OG.cor.v,
+     breaks = c(0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1),
+     col = color_pal, 
+     legend.args = list(text = 'Cor (r)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+```
+
+### SSA
+
+```{r echo=FALSE, collapse = TRUE}
+template.v = 
+  vectorTemplate %>% 
+  filter(as.character(REGION_WB) == 'Sub-Saharan Africa') 
+
+colname.ref = colnames(gws.OG.v)
+
+#Create a long-table with the OG Grace data
+gws.OG.sub = 
+  gws.OG.v %>%
+  filter(as.character(REGION_WB) == 'Sub-Saharan Africa') %>%
+  st_drop_geometry() %>% as.data.table() %>%
+  melt(id.vars    = "rowname",
+    measure.vars  = colname.ref[3:193],
+    variable.name = "yearmon",
+    value.name    = "GWSA_OG") %>%
+  drop_na()
+
+#Create a long-table with the downscaled GRACE data
+gws_05.sub = 
+  gws_05.v %>% 
+  filter(as.character(REGION_WB) == 'Sub-Saharan Africa') %>%
+  st_join(vectorTemplate[,c('rowname')]) %>%
+  st_drop_geometry() %>% as.data.table() %>%
+  data.table::melt(id.vars = c("cell_id", "rowname"),
+                   measure.vars = 1:212,
+                   variable.name = "ymd", value.name = "GWSA_mean") %>%
+  mutate(yearmon = substr(as.Date(ymd),1,7)) %>%
+  drop_na()
+
+
+#Create a merged dataset
+gws.OG.merged = 
+  gws_05.sub %>% dplyr::select(rowname, yearmon, GWSA_mean, ymd, ) %>% 
+  merge(gws.OG.sub, by = c('yearmon', 'rowname'), all.x = T) %>%
+  arrange(rowname, ymd) %>%
+  drop_na()
+
+#Assess the correlation
+gws.OG.merged.cor = 
+  gws.OG.merged %>%
+  mutate(GWSA_mean = as.numeric(GWSA_mean),
+         GWSA_OG = as.numeric(GWSA_OG)) %>%
+  group_by(rowname) %>% 
+  dplyr::summarise(cor1=cor(GWSA_mean, GWSA_OG))
+  
+#Link the row names to vector
+gws.OG.cor.v = 
+  template.v %>%
+  merge(gws.OG.merged.cor, by = 'rowname') %>%
+  drop_na() 
+
+template.r = 
+  rasterTemplate %>% 
+  crop(gws.OG.cor.v)
+
+gws.OG.cor.v = 
+  gws.OG.cor.v %>%
+  fasterize(template.r, field = 'cor1')
+
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.OG.cor.v,
+     breaks = c(0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1),
+     col = color_pal, 
+     legend.args = list(text = 'Cor (r)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+```
+
+### South Asia
+
+```{r echo=FALSE, collapse = TRUE}
+template.v = 
+  vectorTemplate %>% 
+  filter(as.character(REGION_WB) == 'South Asia') 
+
+colname.ref = colnames(gws.OG.v)
+
+#Create a long-table with the OG Grace data
+gws.OG.sub = 
+  gws.OG.v %>%
+  filter(as.character(REGION_WB) == 'South Asia') %>%
+  st_drop_geometry() %>% as.data.table() %>%
+  melt(id.vars    = "rowname",
+    measure.vars  = colname.ref[3:193],
+    variable.name = "yearmon",
+    value.name    = "GWSA_OG") %>%
+  drop_na()
+
+#Create a long-table with the downscaled GRACE data
+gws_05.sub = 
+  gws_05.v %>% 
+  filter(as.character(REGION_WB) == 'South Asia') %>%
+  st_join(vectorTemplate[,c('rowname')]) %>%
+  st_drop_geometry() %>% as.data.table() %>%
+  data.table::melt(id.vars = c("cell_id", "rowname"),
+                   measure.vars = 1:212,
+                   variable.name = "ymd", value.name = "GWSA_mean") %>%
+  mutate(yearmon = substr(as.Date(ymd),1,7)) %>%
+  drop_na()
+
+#Create a merged dataset
+gws.OG.merged = 
+  gws_05.sub %>% dplyr::select(rowname, yearmon, GWSA_mean, ymd, ) %>% 
+  merge(gws.OG.sub, by = c('yearmon', 'rowname'), all.x = T) %>%
+  arrange(rowname, ymd) %>%
+  drop_na()
+
+#Assess the correlation
+gws.OG.merged.cor = 
+  gws.OG.merged %>%
+  mutate(GWSA_mean = as.numeric(GWSA_mean),
+         GWSA_OG = as.numeric(GWSA_OG)) %>%
+  group_by(rowname) %>% 
+  dplyr::summarise(cor1=cor(GWSA_mean, GWSA_OG))
+  
+#Link the row names to vector
+gws.OG.cor.v = 
+  template.v %>%
+  merge(gws.OG.merged.cor, by = 'rowname') %>%
+  drop_na() 
+
+template.r = 
+  rasterTemplate %>% 
+  crop(gws.OG.cor.v)
+
+gws.OG.cor.v = 
+  gws.OG.cor.v %>%
+  fasterize(template.r, field = 'cor1')
+
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.OG.cor.v,
+     breaks = c(0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1),
+     col = color_pal, 
+     legend.args = list(text = 'Cor (r)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+```
+
+
+Results show moderate to poor correlation between the two GRACE products in:
+
+* Yemen/Oman region
+* Mouth of the Nile Basin
+* Region close to Kuwait
+* South Africa/Madagascar/Western Sahara
+* Bengal/Indus River Basin/Central India
+
+## Session Info
+
+<div  class="fold s">
+
+```{r echo = FALSE, collapse = TRUE}
+print(sessionInfo())
+```
+
+</div>

@@ -16,14 +16,14 @@ proj_dir = "~/Dropbox/WB/GRACE_Ensemble/"
 filePath = fread(paste0(proj_dir, 'FileSummary.csv'))
 
 #Select the GLDAS Solution
-sws_id = 23
+sws_id = 24
 sws_anomaly = 
   fread(filePath[Type=='GLDAS' & ID == sws_id]$FilePath) %>%
   .[order(lon,lat)] %>%
   mutate(ID2 = paste0(lon, lat))
 
 #Select the GRACE Solution
-grace_id = 12
+grace_id = 14
 tws_anomaly = 
   fread(filePath[Type=='GRACE' & ID == grace_id]$FilePath) %>%
   mutate(ID2 = paste0(lon, lat)) %>%
@@ -76,7 +76,7 @@ gws.raster = rasterFromXYZ(gws_trends_estimates[,.(lon, lat, trends)])
 
 #Save the plot for future reference
 plot_name =
-  paste0(proj_dir, "Outputs/GWS/Trend_Plots_1/GRACE_GWS_", combo_name,
+  paste0(proj_dir, "Outputs/GWS/Trend_Plots_1_cm_yr/GRACE_GWS_", combo_name,
          "_2002_2020_BSL2017.png")
 
 png(plot_name, width = 1250, height = 650)
@@ -86,7 +86,7 @@ plot(gws.raster, zlim=c(-10,10))
 dev.off()
 
 writeRaster(gws.raster, 
-            paste0(proj_dir, "Outputs/GWS/Rasters/GRACE_GWS_", combo_name,
+            paste0(proj_dir, "Outputs/GWS/Trend_Rasters_cm_yr/GRACE_GWS_", combo_name,
                    "_2002_2020_BSL2017"), format = 'GTiff', overwrite=TRUE)
 
 #fwrite(gws_trends_estimates, "Output/GRACE_GWS_annual_trends_220203.csv")
@@ -105,7 +105,7 @@ color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393
 
 #Save the plot for future reference
 plot_name =
-  paste0(proj_dir, "Outputs/GWS/Trend_Plots_2/GRACE_GWS_", combo_name,
+  paste0(proj_dir, "Outputs/GWS/Trend_Plots_2_cm_yr/GRACE_GWS_", combo_name,
          "_2002_2020_BSL2017_alt.png")
 
 png(plot_name, width = 1250, height = 650)
