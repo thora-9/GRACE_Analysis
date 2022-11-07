@@ -138,7 +138,25 @@ gws.OG.3 =
   summarise(GWS = mean(GWS, na.rm =  T)) %>%
   as.data.table() 
 
+#Load the fishnet
+fishnet = 
+  st_read('/Users/tejasvi/Dropbox/WB/Fishnet_halfdegree/global_fishnet.shp')
 
+fishnet.centroid = 
+  fishnet %>%
+  filter(!row_number() %in% c(18901, 23763, 26074, 42334, 31737)) %>% #Invalid polygon
+  st_make_valid() %>%
+  st_centroid()
+
+fishnet.r = 
+  fishnet %>%
+  st_drop_geometry() %>%
+  as.data.table()
+
+fishnet.r = 
+  rasterFromXYZ(fishnet.r[,.(Lon, Lat)])
+
+crs(fishnet.r) = crs(wb_regions)
 ```
 
 
@@ -514,21 +532,27 @@ GGDI.binary.v =
   degree.3.v %>%
   merge(GGDI.binary, by = 'grid.id.3') 
 
-GGDI.binary.centroid = 
-  GGDI.binary.v %>% 
-  st_centroid() %>%
-  st_transform(st_crs(wb_regions)) %>%
-  dplyr::mutate(lon = sf::st_coordinates(.)[,1],
-                lat = sf::st_coordinates(.)[,2]) %>%
+#Convert to 0.5 degree
+GGDI.fishnet = 
+  fishnet.centroid %>%
+  st_join(GGDI.binary.v) %>%
+  drop_na() %>%
+  st_join(wb_regions)
+
+
+GGDI.df = 
+  GGDI.fishnet %>%
   st_drop_geometry() %>%
-  as.data.table()
+  as.data.table() %>%
+  drop_na() 
+
 
 pathOut =  "/Users/tejasvi/Dropbox/WB/GRACE-Deficit/"
 
-fwrite(GGDI.binary.centroid, paste0(pathOut, 'GWS_Deficit_3degree.csv'))
-
-st_write(GGDI.binary.v, 
-         paste0(pathOut, 'GWS_Deficit_3degree.shp'),
+fwrite(GGDI.df, paste0(pathOut, 'GWS_Deficit_nonDownscaled_05degree.csv'))
+# 
+st_write(GGDI.fishnet,
+         paste0(pathOut, 'GWS_Deficit_nonDownscaled_05degree.shp'),
          delete_layer = T)
 
 # 
@@ -573,16 +597,24 @@ plot(plot.zoo, type='l', ylab = 'Deficit Indicator')
 ```{r echo=FALSE, collapse = TRUE}
 
 
-GGDI.binary.r = 
-  fasterize(GGDI.binary.v, degree.3.r, field = 'GWS.binary')
 
-GGDI.binary.r = 
-  crop(GGDI.binary.r, extent(-180, 180, -60, 60))
+GGDI.fishnet.r = 
+  GGDI.fishnet %>%
+  st_drop_geometry() %>%
+  as.data.table()
+
+GGDI.fishnet.r = 
+  rasterFromXYZ(GGDI.fishnet.r[,.(Lon, Lat, GWS.binary)])
+
+crs(GGDI.fishnet.r) = crs(fishnet.r)
+
+GGDI.fishnet.r = 
+  crop(GGDI.fishnet.r, extent(-180, 180, -60, 60))
 
 
 color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
 
-plot(GGDI.binary.r,
+plot(GGDI.fishnet.r,
      col = c('#4393c3', '#d6604d'), 
      legend.args = list(text = 'Depletion (yes/no)', side = 4, 
                         font = 2, line = 2.5, cex = 0.8)) 
