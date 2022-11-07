@@ -1,0 +1,601 @@
+---
+title: "Groundwater Depletion Grids"
+author: "Tejasvi Hora"
+date: "`r Sys.Date()`"
+analyst: |
+  | Tejasvi Hora
+output: 
+  html_document:
+    df_print: kable
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    theme: spacelab
+knit: (function(inputFile, encoding) { 
+          rmarkdown::render(inputFile,
+                            encoding = encoding, 
+                            output_file = 'dGWS_binary_assessment_20221030.html',  
+                            output_dir = '/Users/tejasvi/Dropbox/WB/GRACE_Ensemble/Scripts/Downscaled/') })
+editor_options: 
+  chunk_output_type: console
+---
+
+## Introduction
+This assessment relies on:
+
+* Downscaled GRACE data-provided by __Prof. Di Long, Li Chen and Ximing Wang.__
+* Non-downscaled GRACE data processed by Tejasvi Hora
+
+The purpose of this report is to:
+
+* Calculate the GRACE Groundwater Drought Index (GGDI) -- 10.1016/j.rse.2017.06.026
+* Create a binary grid highlighting regions with and without depletion
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidync)
+library(data.table)
+library(tidyverse)
+library(lubridate)
+library(zyp)
+library(sf)
+library(raster)
+library(terra)
+library(RColorBrewer)
+library(rasterVis)
+library(xts)
+library(stars)
+library(fasterize)
+```
+
+## Load and pre-process the datasets
+
+Main steps involved:
+
+* Loading the dataset: `GWS_mean_05deg.nc`
+* Linking points with World Bank regions data
+
+```{r echo = FALSE, collapse = TRUE, cache=TRUE, results='hide'}
+proj_dir = "/Users/tejasvi/Dropbox/WB/GRACE_Ensemble/"
+
+pathData = '/Users/tejasvi/Dropbox/gwflagship_GRACEdownscaling/Downscaled TWS_GWS v2/'
+gws_mean_05 = 
+  tidync(paste0(pathData, 'GWS_mean_05deg.nc')) %>%
+  hyper_tibble() %>% as.data.table()
+
+#Create a date sequence
+date.seq = 
+  seq(as.Date("2003/2/1"), as.Date("2021/9/1"), "month") %>%
+  as.data.table() %>%
+  rownames_to_column() %>%
+  .[, rowname := as.integer(rowname)]
+colnames(date.seq) = c('rowname', 'date')
+
+#Merge the dates using the rowname column
+gws_mean_05 = 
+  gws_mean_05 %>%
+  merge(date.seq, by.x = 'time', by.y = 'rowname', all.x = T) %>%
+  .[, ':='(yearmon = substr(date, 1, 7),
+           year = substr(date, 1, 4),
+           month = substr(date, 6, 7),
+           GWSA_mean = (GWSA_CLSM+GWSA_Noah)/2,
+           grid.id = paste0(lat, lon))] 
+
+
+####Load World Regions
+wb_regions = 
+  st_read(paste0(proj_dir, "Spatial Files/WB_Regions/WB_countries_Admin0_10m.shp")) %>%
+  dplyr::select(WB_NAME, ISO_A2, ISO_A3, ISO_N3, TYPE, REGION_WB) %>%
+  filter(TYPE != 'Dependency') %>%
+  st_make_valid()
+
+
+
+#load the non-downscaled GRACE data
+gws.OG = 
+  fread(paste0(proj_dir, 
+               'Outputs/GWS/GRACE_GWS_TWS_Ensemble_SWS_Ensemble_2002_2020_BSL2017.csv')) %>%
+  #mutate(lon = lon + 0.001, lat = lat + 0.001) %>% #Jitter so points fall within a single polygon
+  st_as_sf(coords = c("lon", "lat"), 
+           crs = "+proj=longlat +datum=WGS84 +no_defs") %>%
+  st_make_valid() %>%
+  st_join(wb_regions) %>%
+  #st_join(vectorTemplate[,c('rowname')]) %>%
+  drop_na()
+
+pathOut =  "/Users/tejasvi/Dropbox/WB/GRACE-Deficit/"
+
+degree.3.r = 
+  raster(paste0(pathOut, '3degree_placement.tif'))
+
+degree.3.v = 
+  st_as_stars(degree.3.r) %>%
+  st_as_sf() %>%
+  mutate(grid.id.3 = row_number()) %>%
+  dplyr::select(grid.id.3) 
+
+
+#Link the 3 degree grid id to the GRACE data
+gws.OG = 
+  gws.OG %>%
+  st_join(degree.3.v, join = st_within)
+
+#Pivot longer
+#Create 3 degree averages for GWS
+gws.OG.df = 
+  gws.OG %>%
+  st_drop_geometry() %>%
+  pivot_longer(cols = `2002-04`:`2021-01`,
+               names_to = 'yearmon',
+               values_to = 'GWS') %>%
+  mutate(year = substr(yearmon, 1, 4),
+         month = substr(yearmon, 6, 7))
+
+gws.OG.3 = 
+  gws.OG.df %>%
+  group_by(year, month, grid.id.3) %>%
+  summarise(GWS = mean(GWS, na.rm =  T)) %>%
+  as.data.table() 
+
+
+```
+
+
+## Trend Analysis (Downscaled) {.tabset .tabset-pills}
+
+*Reference to Previous Analysis*
+
+The steps involved in assessing trends were:
+
+* Conversion of monthly GWS estimates to annual
+* Estimating _linear_ trends by estimating Sen's Slope
+* Significance of trend not assessed
+
+```{r echo=FALSE, collapse = TRUE}
+#Convert to wide
+gws_05_wide = 
+  gws_mean_05 %>% 
+  dplyr::select(GWSA_mean, lat, lon, date) %>%
+  tidyr::spread(key = date, value = GWSA_mean) %>%
+  mutate(cell_id = paste0(lon, lat))
+
+#Convert to spatial object
+gws_05.v = 
+  st_as_sf(gws_05_wide, coords = c("lon", "lat"), 
+           crs = "+proj=longlat +datum=WGS84 +no_defs")
+
+
+#Merge country data with GRACE
+gws_05.v = 
+  gws_05.v %>%
+  st_make_valid() %>%
+  st_join(wb_regions)
+
+#Add the WB regions to the data.table version
+gws_05_wide = 
+  gws_05_wide %>%
+  merge(gws_05.v[,c(213:219)] %>% st_drop_geometry(), by = 'cell_id', all.x = T)
+
+
+```
+
+
+### MENA 
+
+```{r echo=FALSE, collapse = TRUE}
+#Conduct a trend analysis on each pixel
+
+#First, convert values from monthly to year
+gws_annual = 
+  gws_05_wide %>% 
+  .[as.character(REGION_WB) == 'Middle East & North Africa'] %>%
+  data.table::melt(id.vars = c("lon", "lat", "cell_id"),
+                   measure.vars = 3:214,
+                   variable.name = "ymd", value.name = "GWSA_mean") %>% 
+  .[, year := substr(ymd, 1,4)] %>%
+  .[, an_mean := mean(GWSA_mean), .(lat, lon, year)] %>% 
+  .[,.(lat, lon, cell_id, year, an_mean)] %>% distinct() %>%
+  dcast(lon + lat + cell_id ~ year, value.var = "an_mean") %>% .[order(cell_id)]
+
+gws_trends = 
+  apply(gws_annual[, 4:ncol(gws_annual)], 1, zyp.yuepilon)
+
+gws_trends_estimates = 
+  gws_annual[,1:3] %>%
+  mutate(trends = gws_trends[2,], sig = gws_trends[6,]) %>%
+  mutate(lon = ifelse(lon>180, lon-360, lon))
+
+gws_trends_estimates = 
+  gws_trends_estimates %>%
+  mutate(trends = ifelse(trends < -2, -2, trends)) %>%
+  mutate(trends = ifelse(trends > 2, 2, trends)) 
+
+gws.raster = rasterFromXYZ(gws_trends_estimates[,.(lon, lat, trends)])
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.raster,
+     breaks = c(-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2),
+     col = color_pal, 
+     legend.args = list(text = 'Trend (cm/yr)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+
+```
+
+### SSA
+
+```{r echo=FALSE, collapse = TRUE}
+
+#First, convert values from monthly to year
+gws_annual = 
+  gws_05_wide %>% 
+  .[as.character(REGION_WB) == 'Sub-Saharan Africa'] %>%
+  data.table::melt(id.vars = c("lon", "lat", "cell_id"),
+                   measure.vars = 3:214,
+                   variable.name = "ymd", value.name = "GWSA_mean") %>% 
+  .[, year := substr(ymd, 1,4)] %>%
+  .[, an_mean := mean(GWSA_mean), .(lat, lon, year)] %>% 
+  .[,.(lat, lon, cell_id, year, an_mean)] %>% distinct() %>%
+  dcast(lon + lat + cell_id ~ year, value.var = "an_mean") %>% .[order(cell_id)]
+
+gws_trends = 
+  apply(gws_annual[, 4:ncol(gws_annual)], 1, zyp.yuepilon)
+
+gws_trends_estimates = 
+  gws_annual[,1:3] %>%
+  mutate(trends = gws_trends[2,], sig = gws_trends[6,]) %>%
+  mutate(lon = ifelse(lon>180, lon-360, lon))
+
+gws_trends_estimates = 
+  gws_trends_estimates %>%
+  mutate(trends = ifelse(trends < -2, -2, trends)) %>%
+  mutate(trends = ifelse(trends > 2, 2, trends)) 
+
+gws.raster = rasterFromXYZ(gws_trends_estimates[,.(lon, lat, trends)])
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.raster,
+     breaks = c(-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2),
+     col = color_pal, 
+     legend.args = list(text = 'Trend (cm/yr)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+
+```
+
+
+
+### SA
+
+```{r echo=FALSE}
+
+#First, convert values from monthly to year
+gws_annual = 
+  gws_05_wide %>% 
+  .[as.character(REGION_WB) == 'South Asia'] %>%
+  data.table::melt(id.vars = c("lon", "lat", "cell_id"),
+                   measure.vars = 3:214,
+                   variable.name = "ymd", value.name = "GWSA_mean") %>% 
+  .[, year := substr(ymd, 1,4)] %>%
+  .[, an_mean := mean(GWSA_mean), .(lat, lon, year)] %>% 
+  .[,.(lat, lon, cell_id, year, an_mean)] %>% distinct() %>%
+  dcast(lon + lat + cell_id ~ year, value.var = "an_mean") %>% .[order(cell_id)]
+
+gws_trends = 
+  apply(gws_annual[, 4:ncol(gws_annual)], 1, zyp.yuepilon)
+
+gws_trends_estimates = 
+  gws_annual[,1:3] %>%
+  mutate(trends = gws_trends[2,], sig = gws_trends[6,]) %>%
+  mutate(lon = ifelse(lon>180, lon-360, lon))
+
+gws_trends_estimates = 
+  gws_trends_estimates %>%
+  mutate(trends = ifelse(trends < -2, -2, trends)) %>%
+  mutate(trends = ifelse(trends > 2, 2, trends)) 
+
+gws.raster = rasterFromXYZ(gws_trends_estimates[,.(lon, lat, trends)])
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.raster,
+     breaks = c(-2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2),
+     col = color_pal, 
+     legend.args = list(text = 'Trend (cm/yr)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+
+```
+
+
+
+## Groundwater Deficit Indicator (Downscaled) {.tabset .tabset-pills}
+
+The main steps involved in estimating this indicator were:
+
+* Calculate the month-specific means over the entire time period (2003-2020) (i.e. the climatology)
+* Remove the seasonality by substracting the climatology from the month-specifc values
+* Normalize the remaining signal by subtracting the mean and dividing by SD (Groundwater deficit)
+* Filter to include only 2019 values, and take the mean Groundwater deficit (last 2 years of the dataset)
+* Convert to binary based on if a grid value is greater or less than -1.5 (standard deviations from the mean)
+
+**See the paper here for more details: https://www.sciencedirect.com/science/article/abs/pii/S0034425717302869**
+
+Reading the map:
+
+* Red are regions with values = 1 -- regions where GW storage has declined based on the indicator
+* Blue are regions with values = 0 -- regions where GW storage has not declined based on the indicator
+
+
+```{r echo=FALSE, collapse = TRUE}
+  
+#GGDI steps
+GGDI = 
+  gws_mean_05 %>%
+  filter(year<2021) %>%
+  group_by(grid.id, month) %>%
+  mutate(GWS.month.mean = mean(GWSA_mean, na.rm = T)) %>% 
+  mutate(GWS.climatology = GWSA_mean - GWS.month.mean) %>%
+  group_by(grid.id) %>%
+  mutate(grid.mean = mean(GWS.climatology, na.rm = T),
+         grid.sd = sd(GWS.climatology, na.rm = T)) %>%
+  mutate(GWS.deficit = (GWS.climatology-grid.mean)/grid.sd) %>%
+  as.data.table()
+
+
+GGDI.binary = 
+  GGDI %>%
+  filter(year>=2019) %>%
+  dplyr::select(lat, lon, grid.id, GWS.deficit) %>%
+  group_by(lat, lon, grid.id) %>%
+  summarise(GWS.deficit.mean = mean(GWS.deficit, na.rm = T)) %>% 
+  mutate(GWS.binary = ifelse(GWS.deficit.mean > -1.5, 0, 1)) %>%
+  as.data.table()
+
+
+#Convert to spatial object
+GGDI.binary.v = 
+  st_as_sf(GGDI.binary, coords = c("lon", "lat"), 
+           crs = "+proj=longlat +datum=WGS84 +no_defs")
+
+#Merge country data with GRACE
+GGDI.binary.v = 
+  GGDI.binary.v %>%
+  st_make_valid() %>%
+  st_join(wb_regions)
+
+
+GGDI.out = 
+  GGDI.binary.v %>% st_drop_geometry() %>% as.data.table() %>% 
+  merge(GGDI.binary %>% dplyr::select(lat, lon, grid.id), by = 'grid.id')
+
+pathOut =  "/Users/tejasvi/Dropbox/WB/GRACE-Deficit/"
+
+fwrite(GGDI.out, paste0(pathOut, 'GWS_Deficit_downscaled.csv'))
+
+```
+
+### Eg. No depletion
+
+**Check values towards the end of the time series** 
+
+```{r echo=FALSE, collapse = TRUE}
+
+
+plot.ts = 
+  GGDI[grid.id=='-34.7519.75'] %>%
+  mutate(yearmon = as.yearmon(yearmon)) 
+
+plot.zoo = zoo(plot.ts$GWS.deficit, plot.ts$yearmon)
+
+plot(plot.zoo, type='l', ylab = 'Deficit Indicator')
+
+```
+
+
+### Eg. With depletion
+
+**Check values towards the end of the time series**
+
+```{r echo=FALSE, collapse = TRUE}
+
+plot.ts = 
+  GGDI[grid.id=='-30.7526.75'] %>%
+  mutate(yearmon = as.yearmon(yearmon)) 
+
+plot.zoo = zoo(plot.ts$GWS.deficit, plot.ts$yearmon)
+
+plot(plot.zoo, type='l', ylab = 'Deficit Indicator')
+
+```
+
+
+### MENA 
+
+```{r echo=FALSE, collapse = TRUE}
+
+GGDI.region = 
+  GGDI.binary.v %>% st_drop_geometry() %>% as.data.table() %>% 
+  .[as.character(REGION_WB) == 'Middle East & North Africa'] %>%
+  merge(GGDI.binary %>% dplyr::select(lat, lon, grid.id), by = 'grid.id')
+
+gws.raster = rasterFromXYZ(GGDI.region[,.(lon, lat, GWS.binary)])
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.raster,
+     col = c('#4393c3', '#d6604d'), 
+     legend.args = list(text = 'Depletion (yes/no)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+
+```
+
+### SSA
+
+```{r echo=FALSE, collapse = TRUE}
+
+GGDI.region = 
+  GGDI.binary.v %>% st_drop_geometry() %>% as.data.table() %>% 
+  .[as.character(REGION_WB) == 'Sub-Saharan Africa'] %>%
+  merge(GGDI.binary %>% dplyr::select(lat, lon, grid.id), by = 'grid.id')
+
+gws.raster = rasterFromXYZ(GGDI.region[,.(lon, lat, GWS.binary)])
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.raster,
+     col = c('#4393c3', '#d6604d'), 
+     legend.args = list(text = 'Depletion (yes/no)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+
+```
+
+
+
+### SA
+
+```{r echo=FALSE}
+
+GGDI.region = 
+  GGDI.binary.v %>% st_drop_geometry() %>% as.data.table() %>% 
+  .[as.character(REGION_WB) == 'South Asia'] %>%
+  merge(GGDI.binary %>% dplyr::select(lat, lon, grid.id), by = 'grid.id')
+
+gws.raster = rasterFromXYZ(GGDI.region[,.(lon, lat, GWS.binary)])
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(gws.raster,
+     col = c('#4393c3', '#d6604d'), 
+     legend.args = list(text = 'Depletion (yes/no)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+
+```
+
+## Groundwater Deficit Indicator (Non-Downscaled) {.tabset .tabset-pills}
+
+* Follows the same methodology as the above.
+* Uses the 3 by 3 degrees GRACE grid 
+
+Reading the map:
+
+* Red are regions with values = 1 -- regions where GW storage has declined based on the indicator
+* Blue are regions with values = 0 -- regions where GW storage has not declined based on the indicator
+
+
+```{r echo=FALSE, collapse = TRUE}
+ 
+#GGDI steps
+GGDI = 
+  gws.OG.3 %>%
+  filter(year<2021) %>%
+  group_by(grid.id.3, month) %>%
+  mutate(GWS.month.mean = mean(GWS, na.rm = T)) %>% 
+  mutate(GWS.climatology = GWS - GWS.month.mean) %>%
+  group_by(grid.id.3) %>%
+  mutate(grid.mean = mean(GWS.climatology, na.rm = T),
+         grid.sd = sd(GWS.climatology, na.rm = T)) %>%
+  mutate(GWS.deficit = (GWS.climatology-grid.mean)/grid.sd) %>%
+  as.data.table()
+
+
+GGDI.binary = 
+  GGDI %>%
+  filter(year>=2019) %>%
+  dplyr::select( grid.id.3, GWS.deficit) %>%
+  group_by(grid.id.3) %>%
+  summarise(GWS.deficit.mean = mean(GWS.deficit, na.rm = T)) %>% 
+  mutate(GWS.binary = ifelse(GWS.deficit.mean > -1.5, 0, 1)) %>%
+  as.data.table()
+
+
+#Convert to spatial object
+GGDI.binary.v = 
+  degree.3.v %>%
+  merge(GGDI.binary, by = 'grid.id.3') 
+
+GGDI.binary.centroid = 
+  GGDI.binary.v %>% 
+  st_centroid() %>%
+  st_transform(st_crs(wb_regions)) %>%
+  dplyr::mutate(lon = sf::st_coordinates(.)[,1],
+                lat = sf::st_coordinates(.)[,2]) %>%
+  st_drop_geometry() %>%
+  as.data.table()
+
+pathOut =  "/Users/tejasvi/Dropbox/WB/GRACE-Deficit/"
+
+fwrite(GGDI.binary.centroid, paste0(pathOut, 'GWS_Deficit_3degree.csv'))
+
+st_write(GGDI.binary.v, 
+         paste0(pathOut, 'GWS_Deficit_3degree.shp'),
+         delete_layer = T)
+
+# 
+# 
+# #Merge country data with GRACE
+# GGDI.binary.v = 
+#   GGDI.binary.v %>%
+#   st_make_valid() %>%
+#   st_join(wb_regions)
+# 
+# 
+# GGDI.out = 
+#   GGDI.binary.v %>% st_drop_geometry() %>% as.data.table() %>% 
+#   merge(GGDI.binary %>% dplyr::select(lat, lon, grid.id), by = 'grid.id')
+# 
+# pathOut =  "/Users/tejasvi/Dropbox/WB/GRACE-Deficit/"
+# 
+# fwrite(GGDI.out, paste0(pathOut, 'GWS_Deficit_downscaled.csv'))
+
+
+```
+
+### Eg. With depletion
+
+**Check values towards the end of the time series**
+
+```{r echo=FALSE, collapse = TRUE}
+
+plot.ts = 
+  GGDI[grid.id.3==1158] %>%
+  mutate(yearmon = as.yearmon(paste0(year,'-', month))) 
+
+plot.zoo = zoo(plot.ts$GWS.deficit, plot.ts$yearmon)
+
+plot(plot.zoo, type='l', ylab = 'Deficit Indicator')
+
+```
+
+
+### Global Hotspots 
+
+```{r echo=FALSE, collapse = TRUE}
+
+
+GGDI.binary.r = 
+  fasterize(GGDI.binary.v, degree.3.r, field = 'GWS.binary')
+
+GGDI.binary.r = 
+  crop(GGDI.binary.r, extent(-180, 180, -60, 60))
+
+
+color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+plot(GGDI.binary.r,
+     col = c('#4393c3', '#d6604d'), 
+     legend.args = list(text = 'Depletion (yes/no)', side = 4, 
+                        font = 2, line = 2.5, cex = 0.8)) 
+
+```
+
+
+## Session Info
+
+<div  class="fold s">
+
+```{r echo = FALSE, collapse = TRUE}
+print(sessionInfo())
+```
+
+</div>
