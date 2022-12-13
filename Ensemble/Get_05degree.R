@@ -22,7 +22,8 @@ ensemble =
                'Outputs/GWS/GRACE_GWS_TWS_Ensemble_SWS_Ensemble_2002_2020_BSL2017.csv')) %>%
   #mutate(lon = lon + 0.001, lat = lat + 0.001) %>% #Jitter so points fall within a single polygon
   st_as_sf(coords = c("lon", "lat"), 
-           crs = "+proj=longlat +datum=WGS84 +no_defs")
+           crs = "+proj=longlat +datum=WGS84 +no_defs") %>%
+  st_buffer(dist = 0.1)
 
 ensemble.r = 
   fread(paste0(proj_dir, 
@@ -40,6 +41,9 @@ fishnet.GRACE =
   filter(!row_number() %in% c(18901, 23763, 26074, 42334, 31737)) %>% #Invalid polygon
   st_make_valid() %>%
   st_join(ensemble)
+
+test =
+  rasterFromXYZ(fishnet.GRACE[,c('Lon', 'Lat', "2019-12")] %>% st_drop_geometry())
 
 #Get point form data
 fishnet.centroid = 
@@ -75,16 +79,18 @@ fishnet.df.long =
   dplyr::select(-`2021-01`, -OBJECTID) %>%
   as.data.table()
 
+test =
+  rasterFromXYZ(fishnet.df[,.(Lon, Lat, `2021-01`)])
 
 #Write output (spatial)
 st_write(fishnet.centroid, paste0(proj_dir, 
-             'Outputs/GWS/GRACE_GWS_Ensemble_2002_2020_BSL2017_05degree.shp')) 
+             'Outputs/GWS/half-degree/GRACE_GWS_Ensemble_2002_2020_BSL2017_05degree.shp')) 
 
 #Write output (non-spatial)
 
 #Global
 fwrite(fishnet.df.long, paste0(proj_dir, 
-                          'Outputs/GWS/GRACE_GWS_Ensemble_2002_2020_BSL2017_05degree.csv'))
+                          'Outputs/GWS/half-degree/GRACE_GWS_Ensemble_2002_2020_BSL2017_05degree.csv'))
 
 #South-Asia
 fwrite(fishnet.df.long[WB_REGION == 'SOA'], paste0(proj_dir, 
