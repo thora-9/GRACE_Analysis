@@ -23,12 +23,16 @@ sws_anomaly =
   mutate(ID2 = paste0(lon, lat))
 
 #Select the GRACE Solution
-grace_id = 14
+grace_id = 16
 tws_anomaly = 
   fread(filePath[Type=='GRACE' & ID == grace_id]$FilePath) %>%
   mutate(ID2 = paste0(lon, lat)) %>%
   dplyr::filter(ID2 %in% sws_anomaly$ID2) %>% 
   .[order(lon,lat)]
+
+#Make sure the colnames are the same
+commonCol = intersect(colnames(tws_anomaly), colnames(sws_anomaly)) 
+tws_anomaly = dplyr::select(tws_anomaly, all_of(commonCol))
 
 combo_name = paste(filePath[ID==grace_id]$Name, filePath[ID==sws_id]$Name, sep='_')
 

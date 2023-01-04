@@ -19,7 +19,7 @@ proj_dir = "~/Dropbox/WB/GRACE_Ensemble/"
 #Load the non-0.5 degree datasets
 ensemble = 
   fread(paste0(proj_dir, 
-               'Outputs/GWS/GRACE_GWS_TWS_Ensemble_SWS_Ensemble_2002_2020_BSL2017.csv')) %>%
+               'Outputs/GWS/9002_GRACE_GWS_TWS_4Ensemble_SWS_Ensemble_2002_2020_BSL2017.csv')) %>%
   #mutate(lon = lon + 0.001, lat = lat + 0.001) %>% #Jitter so points fall within a single polygon
   st_as_sf(coords = c("lon", "lat"), 
            crs = "+proj=longlat +datum=WGS84 +no_defs") %>%
@@ -27,7 +27,7 @@ ensemble =
 
 ensemble.r = 
   fread(paste0(proj_dir, 
-               'Outputs/GWS/GRACE_GWS_TWS_Ensemble_SWS_Ensemble_2002_2020_BSL2017.csv')) 
+               'Outputs/GWS/9002_GRACE_GWS_TWS_4Ensemble_SWS_Ensemble_2002_2020_BSL2017.csv')) 
 ensemble.r =
   rasterFromXYZ(ensemble.r[,.(lon, lat, `2021-01`)])
 
@@ -84,17 +84,17 @@ test =
 
 #Write output (spatial)
 st_write(fishnet.centroid, paste0(proj_dir, 
-             'Outputs/GWS/half-degree/GRACE_GWS_Ensemble_2002_2020_BSL2017_05degree.shp')) 
+             'Outputs/GWS/half-degree/GRACE_GWS_4Ensemble_2002_2020_BSL2017_05degree.shp')) 
 
 #Write output (non-spatial)
 
 #Global
 fwrite(fishnet.df.long, paste0(proj_dir, 
-                          'Outputs/GWS/half-degree/GRACE_GWS_Ensemble_2002_2020_BSL2017_05degree.csv'))
+                          'Outputs/GWS/half-degree/GRACE_GWS_4Ensemble_2002_2020_BSL2017_05degree.csv'))
 
 #South-Asia
 fwrite(fishnet.df.long[WB_REGION == 'SOA'], paste0(proj_dir, 
-                          'Outputs/GWS/half-degree/GRACE_GWS_Ensemble_2002_2020_BSL2017_05degree_SA.csv'))
+                          'Outputs/GWS/half-degree/GRACE_GWS_4Ensemble_2002_2020_BSL2017_05degree_SA.csv'))
 
 
 #A visual comparison between fishnet, my GRACE grid and Di Long's grid suggests that 

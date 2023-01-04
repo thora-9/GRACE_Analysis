@@ -10,9 +10,9 @@ gws_all = lapply(gws.path, fread)
 #Get the names for each of them
 filePath = fread(paste0(proj_dir, 'FileSummary.csv'))
 #Check filepaths in the csv and folder align before adding names
-gws.path == filePath[ID %in% c(101:110)]$FilePath
+gws.path == filePath[ID > 100] %>% .[order(ID),] %>% dplyr::select(FilePath)
 
-names(gws_all) = filePath[ID %in% c(101:110)]$Name
+names(gws_all) = filePath[ID > 100]$Name
 
 #Convert each dataset into long format/add new cell_id column
 
@@ -67,14 +67,14 @@ gws.final =
   merge(gws_out_country, by = 'ID', all = T)
 
 #########################################################################
-# fwrite(gws.final,
-#        paste0(proj_dir, "Outputs/Ensembles/GRACE_GWS_Ensemble_1degree_220828.csv"))
-# 
+fwrite(gws.final,
+       paste0(proj_dir, "Outputs/Ensembles/GRACE_GWS_Ensemble_1degree_221230.csv"))
+
 
 
 #############Tests
 
-gws_in = fread(paste0(proj_dir, "Outputs/Ensembles/GRACE_GWS_Ensemble_1degree_220828.csv"))
+gws_in = fread(paste0(proj_dir, "Outputs/Ensembles/GRACE_GWS_Ensemble_1degree_221230.csv"))
 
 gws_all[[4]]
 

@@ -21,6 +21,7 @@ library(RcppRoll)
 proj_dir = "~/Dropbox/WB/GRACE_Ensemble/"
 pathOut =  "/Users/tejasvi/Dropbox/WB/GRACE-Deficit/"
 pathIn = '/Users/tejasvi/Dropbox/gwflagship_typologies/'
+pathData = '/Users/tejasvi/Dropbox/gwflagship_GRACEdownscaling/Downscaled TWS_GWS v2/'
 
 ############################################################################################
 ####Load World Regions
@@ -30,27 +31,35 @@ wb_regions =
   filter(TYPE != 'Dependency') %>%
   st_make_valid()
 
+gws_mean_05 = 
+  tidync(paste0(pathData, 'GWS_mean_05deg.nc')) %>%
+  hyper_tibble() %>% as.data.table()
 
-#load the non-downscaled GRACE data
-gws.OG = 
-  fread(paste0(proj_dir, 
-               'Outputs/GWS/half-degree/GRACE_GWS_4Ensemble_2002_2020_BSL2017_05degree.csv')) %>%
-  dplyr::rename(cell_id_OG = cell_id) %>%
-  #st_drop_geometry() %>%
-  mutate(year = substr(ym, 1, 4),
-         month = substr(ym, 6, 7),
-         cell_id = paste0(Lon, Lat))
+#Create a date sequence
+date.seq = 
+  seq(as.Date("2003/2/1"), as.Date("2021/9/1"), "month") %>%
+  as.data.table() %>%
+  rownames_to_column() %>%
+  .[, rowname := as.integer(rowname)]
+colnames(date.seq) = c('rowname', 'date')
+
+#Merge the dates using the rowname column
+gws_mean_05 = 
+  gws_mean_05 %>%
+  merge(date.seq, by.x = 'time', by.y = 'rowname', all.x = T) %>%
+  .[, ':='(yearmon = substr(date, 1, 7),
+           year = substr(date, 1, 4),
+           month = substr(date, 6, 7),
+           GWSA_mean = (GWSA_CLSM+GWSA_Noah)/2,
+           cell_id = paste0(lat, lon))] 
 
 gws.unique = 
-  gws.OG %>% 
-  dplyr::select(-year,-month, -Shape_Leng, -Shape_Area, -GWS_ensemble, -ym) %>%
+  gws_mean_05 %>% 
+  dplyr::select(lat, lon) %>%
   distinct() %>%
-  rownames_to_column() %>%
-  as.data.table()
-
+  rownames_to_column() 
   
-plot1 = 
-  rasterFromXYZ(gws.unique[,.(Lon, Lat, ISO_N3)])
+
 
 #Load the fishnet
 fishnet = 
@@ -79,14 +88,17 @@ typ <-
   mutate(aqtyp=factor(aqtyp_max, levels=c("Major Alluvial","Complex","Karstic","Local/Shallow"))) %>%
   as.data.table()
 
+plot1 = 
+  rasterFromXYZ(typ[,.(lon, lat, aqtyp_pct_NA)])
+
 ############################################################################################
 #GGDI steps
 ############################################################################################
 GGDI = 
-  gws.OG %>%
+  gws_mean_05 %>%
   filter(year<2021) %>%
-  merge(gws.unique[,.(Lat, Lon, rowname)], by = c('Lat', 'Lon'), all.x=T) %>%
-  rename(GWS = GWS_ensemble) %>%
+  merge(gws.unique, by = c('lat', 'lon'), all.x=T) %>%
+  rename(GWS = GWSA_mean) %>%
   group_by(rowname, month) %>% #Group by month and cell to get climatology
   mutate(GWS.month.mean = mean(GWS, na.rm = T)) %>% 
   rowwise() %>%
@@ -96,12 +108,11 @@ GGDI =
          grid.sd = sd(GWS.climatology, na.rm = T)) %>%
   mutate(GWS.deficit = (GWS.climatology-grid.mean)/grid.sd) %>%
   mutate(GWS.def.roll12 = roll_mean(GWS.deficit, 12, align = 'right', fill = NA),
-         GWS.def.roll18 = roll_mean(GWS.deficit, 18, align = 'right', fill = NA),
-         GWS.def.roll24 = roll_mean(GWS.deficit, 24, align = 'right', fill = NA)) %>%
+          GWS.def.roll18 = roll_mean(GWS.deficit, 18, align = 'right', fill = NA),
+          GWS.def.roll24 = roll_mean(GWS.deficit, 24, align = 'right', fill = NA)) %>%
   as.data.table()
-  
-View(GGDI[cell_id == '25.2568.25'])
 
+#View(GGDI[cell_id == '25.2568.25'])
 
 #Basic Indicator -  Is the GW Deficit value between 2019-2020 less than -1.5
 GGDI.binary1 = 
@@ -144,20 +155,19 @@ GGDI.binary2 =
   as.data.table() 
 
 
-
 #Merge indicators
 GGDI.out = 
   GGDI.binary1 %>%
   merge(GGDI.binary1b[,.(rowname, Def.13_14)], by = 'rowname', all.x = T) %>%
   merge(GGDI.binary2, by = 'rowname', all.x = T) %>%
   merge(gws.unique, by = 'rowname', all.x = T) %>%
-  merge(typ[,c('lat', 'lon', 'aqtyp_max')], by.x = c('Lat', 'Lon'), by.y = c('lat', 'lon')) %>%
+  merge(typ[,c('lat', 'lon', 'aqtyp_max')], by.x = c('lat', 'lon'), by.y = c('lat', 'lon'), all.x = T) %>%
   #Basically, making sure that hotspots in 2019 remain hotspots in the rolling mean indicator
   mutate(Def.bin24_150 = ifelse(Def.19_20==1, 1, Def.bin24_150)) 
-  
+
 GGDI.out.sub = 
   GGDI.out %>%
-  dplyr::select(1:6, Def.total24_150, Def.bin24_150, Id:aqtyp_max)
+  dplyr::select(1:6, Def.total24_150, Def.bin24_150, aqtyp_max)
 
 
 ############################################################################################
@@ -166,7 +176,7 @@ GGDI.out.sub =
 
 #####
 plot1 = 
-  rasterFromXYZ(GGDI.out[,.(Lon, Lat, Def.19_20)])
+  rasterFromXYZ(GGDI.out[,.(lon, lat, Def.19_20)])
 
 crs(plot1) = crs(fishnet.r)
 
@@ -178,7 +188,7 @@ color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393
 
 #Save the plot for future reference
 plot_name =
-  paste0("~/Dropbox/WB/GRACE-Deficit/Figures/", "GW_Deficit_19_20.png")
+  paste0("~/Dropbox/WB/GRACE-Deficit/Figures/", "GW_Deficit_19_20_dscl.png")
 
 png(plot_name, width = 1250, height = 650)
 
@@ -206,12 +216,12 @@ dev.off()
 # plot(plot2,
 #      legend.args = list(text = 'Depletion', side = 4, 
 #                         font = 2, line = 2.5, cex = 0.8)) 
-# 
+
 
 #####
 
 plot3 = 
-  rasterFromXYZ(GGDI.out[,.(Lon, Lat, Def.bin24_150)])
+  rasterFromXYZ(GGDI.out[,.(lon, lat, Def.bin24_150)])
 
 crs(plot3) = crs(fishnet.r)
 
@@ -224,7 +234,7 @@ color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393
 
 #Save the plot for future reference
 plot_name =
-  paste0("~/Dropbox/WB/GRACE-Deficit/Figures/", "GW_Deficit_24_month_binary.png")
+  paste0("~/Dropbox/WB/GRACE-Deficit/Figures/", "GW_Deficit_24_month_binary_dscl.png")
 
 png(plot_name, width = 1250, height = 650)
 
@@ -258,10 +268,10 @@ table(GGDI.out[!WB_REGION %in% c("Other"),]$Def.19_20,
 
 pathOut =  "/Users/tejasvi/Dropbox/WB/GRACE-Deficit/"
 
-fwrite(GGDI.out.sub, paste0(pathOut, 'GGDI_output_nonDownscaled.csv'))
+fwrite(GGDI.out.sub, paste0(pathOut, 'GGDI_output_dscl.csv'))
 
 # 
-st_write(GGDI.fishnet,
-         paste0(pathOut, 'GWS_Deficit_nonDownscaled_05degree.shp'),
-         delete_layer = T)
-
+# st_write(GGDI.fishnet,
+#          paste0(pathOut, 'GWS_Deficit_nonDownscaled_05degree.shp'),
+#          delete_layer = T)
+# 
