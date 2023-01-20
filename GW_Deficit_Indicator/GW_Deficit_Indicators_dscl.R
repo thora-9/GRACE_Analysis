@@ -174,29 +174,29 @@ GGDI.out.sub =
 #Plots
 ############################################################################################
 
-#####
 plot1 = 
   rasterFromXYZ(GGDI.out[,.(lon, lat, Def.19_20)])
 
 crs(plot1) = crs(fishnet.r)
 
 plot1 = 
-  crop(plot1, extent(-180, 180, -60, 60))
+  crop(plot1, extent(-180, 180, -60, 60)) %>%
+  rast()
+
+cls <- data.frame(id=0:1, cover=c("No Deficit", "Deficit"))
+levels(plot1) <- cls
 
 
-color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+#color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
 
 #Save the plot for future reference
 plot_name =
   paste0("~/Dropbox/WB/GRACE-Deficit/Figures/", "GW_Deficit_19_20_dscl.png")
 
-png(plot_name, width = 1250, height = 650)
-
+png(plot_name, width = 1250, height = 500)
 
 plot(plot1,
-     col = c('#4393c3', '#d6604d'), 
-     legend.args = list(text = 'Depletion (yes/no)', side = 4, 
-                        font = 2, line = 2.5, cex = 0.8)) 
+     col = c('#4393c3', '#d6604d'), plg=list(cex=1.2))
 
 dev.off()
 
@@ -226,24 +226,28 @@ plot3 =
 crs(plot3) = crs(fishnet.r)
 
 plot3 = 
-  crop(plot3, extent(-180, 180, -60, 60))
+  crop(plot3, extent(-180, 180, -60, 60))  %>%
+  rast()
+
+cls <- data.frame(id=0:1, cover=c("No Deficit", "Deficit"))
+levels(plot3) <- cls
 
 
-color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+#color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
 
 
 #Save the plot for future reference
 plot_name =
   paste0("~/Dropbox/WB/GRACE-Deficit/Figures/", "GW_Deficit_24_month_binary_dscl.png")
 
-png(plot_name, width = 1250, height = 650)
+png(plot_name, width = 1250, height = 500)
 
 plot(plot3,
-     col = c('#4393c3', '#d6604d'), 
-     legend.args = list(text = 'Depletion (yes/no)', side = 4, 
-                        font = 2, line = 2.5, cex = 0.8)) 
+     col = c('#4393c3', '#d6604d'), plg=list(cex=1.2))
+
 
 dev.off()
+
 
 ############################################################################################
 #Distribution of hotspots by aq typ

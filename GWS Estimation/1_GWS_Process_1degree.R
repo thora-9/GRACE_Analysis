@@ -23,7 +23,7 @@ sws_anomaly =
   mutate(ID2 = paste0(lon, lat))
 
 #Select the GRACE Solution
-grace_id = 16
+grace_id = 17
 tws_anomaly = 
   fread(filePath[Type=='GRACE' & ID == grace_id]$FilePath) %>%
   mutate(ID2 = paste0(lon, lat)) %>%

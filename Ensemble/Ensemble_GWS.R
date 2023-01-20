@@ -64,11 +64,13 @@ gws_out_country =
 #Merge back with the gws_all long data frame
 gws.final = 
   gws_out %>%
-  merge(gws_out_country, by = 'ID', all = T)
+  merge(gws_out_country, by = 'ID', all = T) %>%
+  dplyr::select(-GWS_4Ensemble, -GFZ_CLM, -GFZ_NOAH, -GFZ_VIC, -GWS_3Ensemble) %>%
+  dplyr::rename(GWS_Ensemble = GWS_3Mascons)
 
 #########################################################################
 fwrite(gws.final,
-       paste0(proj_dir, "Outputs/Ensembles/GRACE_GWS_Ensemble_1degree_221230.csv"))
+       paste0(proj_dir, "Outputs/Ensembles/GRACE_GWS_Ensemble_1degree_230103.csv"))
 
 
 

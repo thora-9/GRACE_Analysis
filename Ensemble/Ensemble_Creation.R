@@ -45,15 +45,15 @@ tws_anomaly2 =
        measure.vars = 4:(ncol(.)-1),
        variable.name = "ym", value.name = "tws") 
 
-grace_id = 13
-tws_anomaly3 = 
-  fread(filePath[Type=='GRACE' & ID == grace_id]$FilePath) %>%
-  mutate(ID2 = paste0(lon, lat)) %>%
-  dplyr::filter(ID2 %in% validGridPoints$ID2) %>% 
-  .[order(lon,lat)] %>%
-  melt(id.vars = c("lon", "lat", "ID2"),
-       measure.vars = 4:(ncol(.)-1),
-       variable.name = "ym", value.name = "tws") 
+# grace_id = 13
+# tws_anomaly3 = 
+#   fread(filePath[Type=='GRACE' & ID == grace_id]$FilePath) %>%
+#   mutate(ID2 = paste0(lon, lat)) %>%
+#   dplyr::filter(ID2 %in% validGridPoints$ID2) %>% 
+#   .[order(lon,lat)] %>%
+#   melt(id.vars = c("lon", "lat", "ID2"),
+#        measure.vars = 4:(ncol(.)-1),
+#        variable.name = "ym", value.name = "tws") 
 
 grace_id = 15
 tws_anomaly4 = 
@@ -68,16 +68,15 @@ tws_anomaly4 =
 
 tws_anomaly =
   merge(tws_anomaly1, tws_anomaly2[,.(ID2, ym, tws2 = tws)], all=TRUE, by = c('ID2', 'ym')) %>%
-  merge(tws_anomaly3[,.(ID2, ym, tws3 = tws)], all=TRUE, by = c('ID2', 'ym')) %>%
   merge(tws_anomaly4[,.(ID2, ym, tws4 = tws)], all=TRUE, by = c('ID2', 'ym')) %>%
-  dplyr::mutate(tws_ensemble = (tws+tws2+tws3+tws4)/4)
+  dplyr::mutate(tws_ensemble = (tws+tws2+tws4)/3)
 
 tws_anomaly_wide = 
   tws_anomaly[,.(lon, lat, cell_id = ID2, ym, tws_ensemble)] %>%
   spread(ym, tws_ensemble)
 
 fwrite(tws_anomaly_wide,
-       paste0(proj_dir, "Outputs/Ensembles/GRACE_TWS_4Ensemble_1degree_221230.csv"))
+       paste0(proj_dir, "Outputs/Ensembles/GRACE_TWS_3Mascons_1degree_230103.csv"))
 
 
 #Load the sws anomalies - 1
@@ -126,7 +125,8 @@ fwrite(sws_anomaly_wide,
        paste0(proj_dir, "Outputs/Ensembles/GRACE_SWS_Ensemble_1degree_220828.csv"))
 
 ##############################################
-#Create the gws anomaly here
+#Create the gws anomaly here (Use the GWS Estimation script -- 1_GWS_Process_1degree.R)
+
 gws_anomaly = 
   tws_anomaly[,.(ID2,lon,lat,ym,tws_ensemble)] %>%
   merge(sws_anomaly[,.(ID2,ym,sws_ensemble)], by = c('ID2', 'ym')) %>%
@@ -136,6 +136,6 @@ gws_anomaly_wide =
   gws_anomaly[,.(lon,lat, cell_id = ID2, ym,gws_ensemble)] %>%
   spread(ym, gws_ensemble)
 
-fwrite(gws_anomaly_wide,
-       paste0(proj_dir, "Outputs/GWS/GRACE_GWS_TWS_4Ensemble_SWS_Ensemble_2002_2020_BSL2017.csv"))
+# fwrite(gws_anomaly_wide,
+#        paste0(proj_dir, "Outputs/GWS/GRACE_GWS_TWS_3Mascons_SWS_Ensemble_2002_2020_BSL2017.csv"))
 
