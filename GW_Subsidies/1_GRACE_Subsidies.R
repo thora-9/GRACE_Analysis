@@ -28,7 +28,7 @@ pathIn = '/Users/tejasvi/Dropbox/gwflagship_typologies/'
 #Can pick the z-score or cm-equivalent version of GWS
 z_score = F
 
-crop_flag = T #This flag helps triggering based on cropped arace
+crop_flag = F #This flag helps triggering based on cropped arace
 cropped.thresh = F #This flag help determine if we should filter regions with >20% cropped area or not
 ############################################################################################
 
@@ -126,6 +126,8 @@ if(crop_flag == T & cropped.thresh == T) {
     gws_TS_country %>%
     dplyr::filter(Per_crop_area<20)
   outName = 'GRACE_country_level_gws_ensemble_annual_non_crop_BSL2017.csv'
+} else {
+  outName = 'GRACE_country_level_gws_ensemble_annual_all_BSL2017.csv'
 }
 
 #Test to see how the remaining GRACE points look

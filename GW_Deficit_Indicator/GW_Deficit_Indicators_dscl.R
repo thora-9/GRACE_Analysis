@@ -91,6 +91,27 @@ typ <-
 plot1 = 
   rasterFromXYZ(typ[,.(lon, lat, aqtyp_pct_NA)])
 
+
+############################################################################################
+#Trend Estimates
+############################################################################################
+trends = 
+  gws_mean_05 %>%
+  filter(year<2021) %>%
+  merge(gws.unique, by = c('lat', 'lon'), all.x=T) %>%
+  rename(GWS = GWSA_mean) %>%
+  group_by(lat, lon, year) %>%
+  summarise(GWS.year = mean(GWS, na.rm = T)) %>%
+  group_by(lat, lon) %>%
+  group_modify(~as.data.frame(t(zyp.yuepilon(.x$GWS.year[1:100])[c(2,6)]))) %>%
+  as.data.table()
+  
+trend.neg.sig = 
+  trends %>%
+  mutate(neg_sig = ifelse(trend<(-0.5) & sig<=0.05, 1, 0))
+
+sum(trend.neg.sig$neg_sig, na.rm = T)
+
 ############################################################################################
 #GGDI steps
 ############################################################################################
@@ -112,7 +133,12 @@ GGDI =
           GWS.def.roll24 = roll_mean(GWS.deficit, 24, align = 'right', fill = NA)) %>%
   as.data.table()
 
-#View(GGDI[cell_id == '25.2568.25'])
+plot(GGDI[cell_id == '23.7588.75']$GWS.def.roll24) #West Bengal/Bangladesh
+plot(GGDI[cell_id == '11.2579.25']$GWS.def.roll24) #South India (Chennai)
+plot(GGDI[cell_id == '13.2577.75']$GWS.def.roll24) #South India (Kolar/Bangalore)
+plot(GGDI[cell_id == '-23.7516.75']$GWS.def.roll24) #Southern Africa
+
+
 
 #Basic Indicator -  Is the GW Deficit value between 2019-2020 less than -1.5
 GGDI.binary1 = 
@@ -167,7 +193,8 @@ GGDI.out =
 
 GGDI.out.sub = 
   GGDI.out %>%
-  dplyr::select(1:6, Def.total24_150, Def.bin24_150, aqtyp_max)
+  dplyr::select(1:6, Def.total24_150, Def.bin24_150, aqtyp_max) %>%
+  merge(trend.neg.sig, by = c('lat', 'lon'), all.x = T)
 
 
 ############################################################################################
@@ -200,22 +227,32 @@ plot(plot1,
 
 dev.off()
 
-# 
-# plot2 = 
-#   rasterFromXYZ(GGDI.out[,.(Lon, Lat, Def.total)])
-# 
-# crs(plot2) = crs(fishnet.r)
-# 
-# plot2 = 
-#   crop(plot2, extent(-180, 180, -60, 60))
-# 
-# 
-# color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
-# 
+#####
+plot2 = 
+  rasterFromXYZ(GGDI.out.sub[,.(lon, lat, neg_sig)])
 
-# plot(plot2,
-#      legend.args = list(text = 'Depletion', side = 4, 
-#                         font = 2, line = 2.5, cex = 0.8)) 
+crs(plot2) = crs(fishnet.r)
+
+plot2 = 
+  crop(plot2, extent(-180, 180, -60, 60)) %>%
+  rast()
+
+cls <- data.frame(id=0:1, cover=c("No Deficit", "Deficit"))
+levels(plot2) <- cls
+
+
+#color_pal = c('#b2182b','#d6604d','#f4a582','#fddbc7','#d1e5f0','#92c5de','#4393c3','#2166ac')
+
+#Save the plot for future reference
+plot_name =
+  paste0("~/Dropbox/WB/GRACE-Deficit/Figures/", "GW_Trend_ind_dscl.png")
+
+png(plot_name, width = 1250, height = 500)
+
+plot(plot2,
+     col = c('#4393c3', '#d6604d'), plg=list(cex=1.2))
+
+dev.off()
 
 
 #####
@@ -272,7 +309,7 @@ table(GGDI.out[!WB_REGION %in% c("Other"),]$Def.19_20,
 
 pathOut =  "/Users/tejasvi/Dropbox/WB/GRACE-Deficit/"
 
-fwrite(GGDI.out.sub, paste0(pathOut, 'GGDI_output_dscl.csv'))
+fwrite(GGDI.out.sub, paste0(pathOut, 'GGDI_output_dscl_230125.csv'))
 
 # 
 # st_write(GGDI.fishnet,
