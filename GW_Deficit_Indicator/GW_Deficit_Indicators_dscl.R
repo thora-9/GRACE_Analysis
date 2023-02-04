@@ -108,7 +108,7 @@ trends =
   
 trend.neg.sig = 
   trends %>%
-  mutate(neg_sig = ifelse(trend<(-0.5) & sig<=0.05, 1, 0))
+  mutate(neg_sig = ifelse(trend< 0 & sig<=0.05, 1, 0))
 
 sum(trend.neg.sig$neg_sig, na.rm = T)
 
@@ -130,7 +130,8 @@ GGDI =
   mutate(GWS.deficit = (GWS.climatology-grid.mean)/grid.sd) %>%
   mutate(GWS.def.roll12 = roll_mean(GWS.deficit, 12, align = 'right', fill = NA),
           GWS.def.roll18 = roll_mean(GWS.deficit, 18, align = 'right', fill = NA),
-          GWS.def.roll24 = roll_mean(GWS.deficit, 24, align = 'right', fill = NA)) %>%
+          GWS.def.roll24 = roll_mean(GWS.deficit, 24, align = 'right', fill = NA),
+          GWS.def.roll30 = roll_mean(GWS.deficit, 30, align = 'right', fill = NA)) %>%
   as.data.table()
 
 plot(GGDI[cell_id == '23.7588.75']$GWS.def.roll24) #West Bengal/Bangladesh
@@ -147,53 +148,44 @@ GGDI.binary1 =
   dplyr::select(rowname, GWS.deficit) %>%
   group_by(rowname) %>%
   summarise(GWS.deficit.mean = mean(GWS.deficit, na.rm = T)) %>% 
-  mutate(Def.19_20 = ifelse(GWS.deficit.mean > -1.5, 0, 1)) %>%
-  as.data.table()
-
-#Basic Indicator -  Is the GW Deficit value between 2013-2014 less than -1.5 (to coincide with Esha's dataset)
-GGDI.binary1b = 
-  GGDI %>%
-  filter(year>=2013 & year<2015) %>%
-  dplyr::select(rowname, GWS.deficit) %>%
-  group_by(rowname) %>%
-  summarise(GWS.deficit.mean = mean(GWS.deficit, na.rm = T)) %>% 
-  mutate(Def.13_14 = ifelse(GWS.deficit.mean > -1, 0, 1)) %>%
+  mutate(Def.19_20_neg15 = ifelse(GWS.deficit.mean > -1.5, 0, 1),
+         Def.19_20_neg1 = ifelse(GWS.deficit.mean > -1, 0, 1)) %>%
   as.data.table()
 
 #Indicator2 -  Is there any period between 2002 and 2017 where the GW Deficit value is less than -1.5
 GGDI.binary2 = 
   GGDI %>%
-  filter(year<=2017) %>%
-  dplyr::select(rowname, GWS.def.roll12, GWS.def.roll18, GWS.def.roll24) %>%
+  filter(year>=2010 & year<=2017) %>%
+  dplyr::select(rowname, GWS.def.roll12, GWS.def.roll18, GWS.def.roll24, GWS.def.roll30) %>%
   mutate(GWS.binary12 = ifelse(GWS.def.roll12 > -1.25, 0, 1),
          GWS.binary18 = ifelse(GWS.def.roll18 > -1.5, 0, 1),
          GWS.binary24_150 = ifelse(GWS.def.roll24 > -1.5, 0, 1),
-         GWS.binary24_125 = ifelse(GWS.def.roll24 > -1.25, 0, 1)) %>%
+         GWS.binary24_100 = ifelse(GWS.def.roll24 > -1, 0, 1)) %>%
   group_by(rowname) %>%
   summarise(Def.total12 = sum(GWS.binary12, na.rm = T),
             Def.total18 = sum(GWS.binary18, na.rm = T),
             Def.total24_150 = sum(GWS.binary24_150, na.rm = T),
-            Def.total24_125 = sum(GWS.binary24_125, na.rm = T)) %>%
+            Def.total24_100 = sum(GWS.binary24_100, na.rm = T)) %>%
   mutate(Def.bin12 = ifelse(Def.total12>0, 1, 0),
          Def.bin18 = ifelse(Def.total18>0, 1, 0),
          Def.bin24_150 = ifelse(Def.total24_150>0, 1, 0),
-         Def.bin24_125 = ifelse(Def.total24_125>0, 1, 0)) %>%
+         Def.bin24_100 = ifelse(Def.total24_100>0, 1, 0)) %>%
   as.data.table() 
 
 
 #Merge indicators
 GGDI.out = 
   GGDI.binary1 %>%
-  merge(GGDI.binary1b[,.(rowname, Def.13_14)], by = 'rowname', all.x = T) %>%
   merge(GGDI.binary2, by = 'rowname', all.x = T) %>%
   merge(gws.unique, by = 'rowname', all.x = T) %>%
   merge(typ[,c('lat', 'lon', 'aqtyp_max')], by.x = c('lat', 'lon'), by.y = c('lat', 'lon'), all.x = T) %>%
   #Basically, making sure that hotspots in 2019 remain hotspots in the rolling mean indicator
-  mutate(Def.bin24_150 = ifelse(Def.19_20==1, 1, Def.bin24_150)) 
+  mutate(Def.bin24_150 = ifelse(Def.19_20_neg15==1, 1, Def.bin24_150),
+         Def.bin24_100 = ifelse(Def.19_20_neg1==1, 1, Def.bin24_100)) 
 
 GGDI.out.sub = 
   GGDI.out %>%
-  dplyr::select(1:6, Def.total24_150, Def.bin24_150, aqtyp_max) %>%
+  dplyr::select(1:6, Def.bin24_100, Def.bin24_150, aqtyp_max) %>%
   merge(trend.neg.sig, by = c('lat', 'lon'), all.x = T)
 
 
@@ -202,7 +194,7 @@ GGDI.out.sub =
 ############################################################################################
 
 plot1 = 
-  rasterFromXYZ(GGDI.out[,.(lon, lat, Def.19_20)])
+  rasterFromXYZ(GGDI.out[,.(lon, lat, Def.19_20_neg1)])
 
 crs(plot1) = crs(fishnet.r)
 
@@ -258,7 +250,7 @@ dev.off()
 #####
 
 plot3 = 
-  rasterFromXYZ(GGDI.out[,.(lon, lat, Def.bin24_150)])
+  rasterFromXYZ(GGDI.out[,.(lon, lat, Def.bin24_100)])
 
 crs(plot3) = crs(fishnet.r)
 
@@ -275,7 +267,7 @@ levels(plot3) <- cls
 
 #Save the plot for future reference
 plot_name =
-  paste0("~/Dropbox/WB/GRACE-Deficit/Figures/", "GW_Deficit_24_month_binary_dscl.png")
+  paste0("~/Dropbox/WB/GRACE-Deficit/Figures/", "GW_Deficit_24_month_binary_dscl_10_20.png")
 
 png(plot_name, width = 1250, height = 500)
 
@@ -309,7 +301,7 @@ table(GGDI.out[!WB_REGION %in% c("Other"),]$Def.19_20,
 
 pathOut =  "/Users/tejasvi/Dropbox/WB/GRACE-Deficit/"
 
-fwrite(GGDI.out.sub, paste0(pathOut, 'GGDI_output_dscl_230125.csv'))
+fwrite(GGDI.out.sub, paste0(pathOut, 'GGDI_output_dscl_230128.csv'))
 
 # 
 # st_write(GGDI.fishnet,
