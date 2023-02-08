@@ -103,7 +103,7 @@ trends =
   group_by(lat, lon, year) %>%
   summarise(GWS.year = mean(GWS, na.rm = T)) %>%
   group_by(lat, lon) %>%
-  group_modify(~as.data.frame(t(zyp.yuepilon(.x$GWS.year[1:100])[c(2,6)]))) %>%
+  group_modify(~as.data.frame(t(zyp.yuepilon(.x$GWS.year)[c(2,6)]))) %>%
   as.data.table()
   
 trend.neg.sig = 

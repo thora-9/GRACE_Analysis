@@ -88,6 +88,13 @@ trans <-
   filter(REGION_WB %in% c('South Asia', 'Middle East & Africa')) %>%
   distinct()
 
+trans.all <- 
+  st_read(paste0(pathTyp, 'IGRAC_Transboundary/2021_TBA_GGIS_utf8_VALID.shp')) %>%
+  st_make_valid() %>%
+  st_join(wb_region_dissolved[,'REGION_WB'], left = T) %>%
+  filter(REGION_WB %in% c('South Asia', 'Middle East & Africa')) %>%
+  dplyr::select(-REGION_WB) %>%
+  distinct() 
 
 #######
 files = list.files(pathIn, '230128', full.names = T)
@@ -102,17 +109,18 @@ ggdi.data = fread(files)
 #Merge the datasets
 ggdi.data = 
   ggdi.data %>%
-  mutate(sumDef = ifelse(Def.bin24_100  == 0 & Def.19_20_neg1 == 0, 1, 
-                         ifelse(Def.bin24_100  == 1 & Def.19_20_neg1 == 0, 2,
-                                ifelse(Def.bin24_100  == 0 & Def.19_20_neg1 == 1, 3, 4))))
+  mutate(sumDef = ifelse(Def.bin24_100  == 0 & neg_sig == 0, 1, 
+                         ifelse(Def.bin24_100  == 1 & neg_sig == 0, 2,
+                                ifelse(Def.bin24_100  == 0 & neg_sig == 1, 3, 4))))
+
 
 
 ############################################################################################
 
 #Overall
 table(ggdi.data$Def.bin24_100,
-      ggdi.data$Def.19_20_neg1,
-      dnn = c("Def_10_20", "Def_19_20"), useNA = 'no')
+      ggdi.data$neg_sig,
+      dnn = c("Def_10_20", "neg_sig"), useNA = 'no')
 
 #Aquifer Type
 tab.aqtyp = 
@@ -123,11 +131,30 @@ tab.aqtyp =
   mutate(total = sum(Freq)) %>%
   mutate(prop = Freq/total)
 
-
 temp.rast = 
   ggdi.data %>% 
-  dplyr::select('lon', 'lat', 'sumDef') %>%
+  dplyr::select('lon', 'lat', 'neg_sig') %>%
   rasterFromXYZ()
+
+#Percent negative trends in each TBA
+TBA_neg = 
+  raster::extract(temp.rast, 
+                  trans.all)
+
+len1 = sapply(TBA_neg, function(x){length(x)})
+sumNA = sapply(TBA_neg, function(x){sum(is.na(x))})
+sumNA.n = sapply(TBA_neg, function(x){sum(!is.na(x))})
+sum = sapply(TBA_neg, function(x){sum(x, na.rm = T)})
+
+
+TBA_neg = 
+  cbind(trans.all, len1, sumNA, sumNA.n, sum) %>%
+  mutate(out.SR = sumNA/len1) %>%
+  filter(out.SR != 1) %>%
+  mutate(atleast1 = ifelse(sum>0, 1, 0))
+
+100*sum(TBA_neg$sum>0)/nrow(TBA_neg)
+#st_write(TBA_neg, paste0(pathOut, 'TBA_neg.shp'), append = F)
 
 cur_rast = 
   ggdi.data %>% 
@@ -144,7 +171,7 @@ cur_rast =
   mutate(deficit=factor(sumDef)) %>%
   as.data.table()
 
-levels(cur_rast$deficit) = c("Deficit 10/20 only", "Deficit - Both")
+levels(cur_rast$deficit) = c("Deficit 10/20", "Negative Trend", "Trend & Deficit")
 
 
 #Clip the aquifer typlogy raster
@@ -156,7 +183,8 @@ aq.v.dscl =
   st_crop(aq.v.clipped, temp.rast)
 
 
-cls <- data.frame(id=1:4, cover=c("No Deficit", "Deficit 10/20 only",
+cls <- data.frame(id=1:4, cover=c("No Deficit", 
+                                  "Deficit 10/20 only",
                                   "Deficit 19/20 only",
                                   "Deficit - Both"))
 
@@ -176,7 +204,7 @@ plot1 =
   scale.aq +
   new_scale_fill() +
   geom_tile(data = cur_rast, aes(x = x, y = y, fill = deficit), alpha = 0.85) +
-  scale_fill_manual(values=c('#787878', '#d6604d'), name = 'Deficit') +
+  scale_fill_manual(values=c('#787878', '#f7918d', '#d6604d'), name = 'Deficit') +
   new_scale_fill() +
   geom_sf(data = studyRegion, fill = NA, size = 0.8) +
   theme_bw() + ylim(-34.83427, 37.5) +
@@ -189,7 +217,7 @@ plot1 =
         legend.text=element_text(size=16), legend.title=element_blank(), legend.key.size = unit(0.8, "cm"),
         panel.background = element_blank(), axis.line = element_blank()) 
 
-ggsave(paste0(pathOut, 'Figures/Def_comparison_aqtyp_230129', '.png'), plot=plot1,
+ggsave(paste0(pathOut, 'Figures/Def_comparison_aqtyp_230204', '.png'), plot=plot1,
        scale=1.5, dpi=300,width =34.85,height = 18, units = 'cm')
 
 plot2 = 
@@ -197,7 +225,7 @@ plot2 =
   geom_sf(data = studyRegion, fill = NA, size = 0.8) +
   new_scale_fill() +
   geom_tile(data = cur_rast, aes(x = x, y = y, fill = deficit), alpha = 0.8) +
-  scale_fill_manual(values=c('#787878', '#d6604d'), name = 'Deficit') +
+  scale_fill_manual(values=c('#787878', '#f7918d', '#d6604d'), name = 'Deficit') +
   theme_bw() + ylim(-34.83427, 37.5) +
   theme(axis.text = element_blank(),
         axis.title = element_blank(),
@@ -208,7 +236,7 @@ plot2 =
         legend.text=element_text(size=16), legend.title=element_blank(), legend.key.size = unit(0.8, "cm"),
         panel.background = element_blank(), axis.line = element_blank()) 
 
-ggsave(paste0(pathOut, 'Figures/Def_comparison_230129', '.png'), plot=plot2,
+ggsave(paste0(pathOut, 'Figures/Def_comparison_230204', '.png'), plot=plot2,
        scale=1.5, dpi=300,width =34.85,height = 18, units = 'cm')
 
 
@@ -217,7 +245,7 @@ plot3 =
   geom_sf(data = studyRegion, fill = NA, size = 0.8) +
   new_scale_fill() +
   geom_tile(data = cur_rast, aes(x = x, y = y, fill = deficit), alpha = 0.8) +
-  scale_fill_manual(values=c('#787878', '#d6604d'), name = 'Deficit') +
+  scale_fill_manual(values=c('#787878', '#f7918d', '#d6604d'), name = 'Deficit') +
   new_scale_fill() +
   geom_sf_pattern(data = trans, 
                   aes(pattern = 'Transboundary\n Aquifer'), colour = 'firebrick4',
@@ -239,6 +267,36 @@ plot3 =
         legend.text=element_text(size=16), legend.title=element_blank(), legend.key.size = unit(0.8, "cm"),
         panel.background = element_blank(), axis.line = element_blank()) 
 
-ggsave(paste0(pathOut, 'Figures/Def_comparison_TBA_230129', '.png'), plot=plot3,
+ggsave(paste0(pathOut, 'Figures/Def_comparison_TBA_230204', '.png'), plot=plot3,
        scale=1.5, dpi=300,width =34.85,height = 18, units = 'cm')
 
+
+plot4 = 
+  ggplot() +
+  geom_sf(data = studyRegion, fill = NA, size = 0.8) +
+  new_scale_fill() +
+  geom_tile(data = cur_rast, aes(x = x, y = y, fill = deficit), alpha = 0.8) +
+  scale_fill_manual(values=c('#787878', '#f7918d', '#d6604d'), name = 'Deficit') +
+  new_scale_fill() +
+  geom_sf_pattern(data = trans.all, 
+                  aes(pattern = 'Transboundary\n Aquifer'), colour = 'firebrick4',
+                  fill = NA, pattern_colour  = 'black', pattern_alpha = 0.7, 
+                  pattern_density = 0.6, pattern_fill = NA,
+                  pattern_spacing = 0.005) +
+  geom_label_repel(data = trans.all,
+                   aes(label = CODE_2021, geometry = geometry),
+                   stat = "sf_coordinates",
+                   min.segment.length = 0) +
+  scale_pattern_manual(name = NA, values = 'circle') +
+  theme_bw() + ylim(-34.83427, 37.5) +
+  theme(axis.text = element_blank(),
+        axis.title = element_blank(),
+        #legend.position="right",
+        legend.position = c(.15, .3),
+        legend.box.background = element_rect(),
+        legend.box.margin = margin(6, 6, 6, 6),
+        legend.text=element_text(size=16), legend.title=element_blank(), legend.key.size = unit(0.8, "cm"),
+        panel.background = element_blank(), axis.line = element_blank()) 
+
+ggsave(paste0(pathOut, 'Figures/Def_comparison_TBAall_230204', '.png'), plot=plot4,
+       scale=1.5, dpi=300,width =34.85,height = 18, units = 'cm')
