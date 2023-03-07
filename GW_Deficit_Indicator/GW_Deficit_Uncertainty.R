@@ -303,7 +303,9 @@ plot3 =
   geom_tile(data = cur_rast, aes(x = x, y = y, fill = total), alpha = 0.8) +
   scale_fill_gradient(low = '#FFD2C1', high = '#A62C2B',
                       breaks = c(1,9),labels = c("Low", "High"), 
-                      name = 'Certainty of Depletion') +
+#                      name = 'Negative Trends 03/20\n\n(Agreement across \nGRACE-GWS timeseries)') +
+                      name = 'Confidence in estimated\nnegative trends') +
+#                      name = 'Agreement across\nGRACE-GWS timeseries') +
   new_scale_fill() +
   geom_sf(data = studyRegion, fill = NA, size = 0.8) +
   new_scale_fill() +
@@ -313,7 +315,7 @@ plot3 =
   theme(axis.text = element_blank(),
         axis.title = element_blank(),
         legend.title=element_text(size=16, vjust = 2, face="bold"),
-        legend.title.align=0.5,
+        legend.title.align=0,
         #legend.position="right",
         legend.position = c(.15, .26),
         legend.box.background = element_rect(),
@@ -321,7 +323,7 @@ plot3 =
         legend.text=element_text(size=16), legend.key.size = unit(0.8, "cm"),
         panel.background = element_blank(), axis.line = element_blank()) 
 
-ggsave(paste0(pathOut, 'Figures/Trend_uncertainty_wdef_230208', '.png'), plot=plot3,
+ggsave(paste0(pathOut, 'Figures/Trend_uncertainty_wdef_230227_v2', '.png'), plot=plot3,
        scale=1.5, dpi=300,width =34.85,height = 18, units = 'cm')
 
 # ggsave(paste0(pathOut, 'Figures/Trend_uncertainty_wdef_230208', '.eps'), plot=plot3,

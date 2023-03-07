@@ -60,6 +60,18 @@ wb_region_dissolved =
   group_by(REGION_WB) %>% 
   summarize(geometry = st_union(geometry)) 
 
+wb_region_dissolved_MA_SA = 
+  wb_regions %>%
+  group_by(REGION_WB) %>% 
+  summarize(geometry = st_union(geometry)) %>%
+  mutate(ID = row_number()) %>%
+  mutate(REGION_WB = as.character(REGION_WB)) %>%
+  #To combine MENA and SSA into one (to avoid dangling cross-region TBA)
+  mutate(REGION_WB2 = ifelse(REGION_WB %in% c('Middle East & North Africa','Sub-Saharan Africa'),
+                             'Middle East & Africa', REGION_WB)) %>%
+  group_by(REGION_WB) %>% 
+  summarize(geometry = st_union(geometry)) 
+
 #######
 #Aquifer Typology
 ## Vector version
@@ -93,6 +105,14 @@ trans.all <-
   st_make_valid() %>%
   st_join(wb_region_dissolved[,'REGION_WB'], left = T) %>%
   filter(REGION_WB %in% c('South Asia', 'Middle East & Africa')) %>%
+  dplyr::select(-REGION_WB) %>%
+  distinct() 
+
+trans.all.MA.SA <- 
+  st_read(paste0(pathTyp, 'IGRAC_Transboundary/2021_TBA_GGIS_utf8_VALID.shp')) %>%
+  st_make_valid() %>%
+  st_join(wb_region_dissolved_MA_SA[,'REGION_WB'], left = T) %>%
+  filter(REGION_WB %in% c('South Asia', 'Middle East & North Africa')) %>%
   dplyr::select(-REGION_WB) %>%
   distinct() 
 
@@ -131,15 +151,23 @@ tab.aqtyp =
   mutate(total = sum(Freq)) %>%
   mutate(prop = Freq/total)
 
+tab.aqtyp = 
+  table(ggdi.data$neg_sig,
+        ggdi.data$aqtyp_max,
+        dnn = c("neg_sig", "aquifer type"), useNA = 'no') %>% as.data.frame() %>%
+  group_by(aquifer.type) %>%
+  mutate(total = sum(Freq)) %>%
+  mutate(prop = Freq/total)
+
 temp.rast = 
   ggdi.data %>% 
   dplyr::select('lon', 'lat', 'neg_sig') %>%
   rasterFromXYZ()
 
-#Percent negative trends in each TBA
+#Percent negative trends in each TBA (MA_SA)
 TBA_neg = 
   raster::extract(temp.rast, 
-                  trans.all)
+                  trans.all.MA.SA)
 
 len1 = sapply(TBA_neg, function(x){length(x)})
 sumNA = sapply(TBA_neg, function(x){sum(is.na(x))})
@@ -148,7 +176,7 @@ sum = sapply(TBA_neg, function(x){sum(x, na.rm = T)})
 
 
 TBA_neg = 
-  cbind(trans.all, len1, sumNA, sumNA.n, sum) %>%
+  cbind(trans.all.MA.SA, len1, sumNA, sumNA.n, sum) %>%
   mutate(out.SR = sumNA/len1) %>%
   filter(out.SR != 1) %>%
   mutate(atleast1 = ifelse(sum>0, 1, 0))
